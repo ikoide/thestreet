@@ -13,7 +13,7 @@ map_data = []
 text = ""
 
 size_y = 16
-size_x = 24
+size_x = 30
 
 COLOR_PAIRS = {
     "GREY": (curses.COLOR_WHITE, curses.COLOR_BLACK),
@@ -44,19 +44,18 @@ def process_data(stdscr, client_socket):
         data = ""
         while True:
             chunk = client_socket.recv(1024).decode()
-            data += chunk
+            data += chunk.replace(":END", "")
+            if ":END" in chunk:
+                break
 
-            while ":END" in data:
-                message, data = data.split(":END", 1)
+        if data.startswith("MAP:"):
+            map_data = init_map()
 
-                if message.startswith("MAP:"):
-                    map_data = init_map()
-
-                    entities = [entity.split(":") for entity in message[4:].split("|")]
-                    for entity in entities:
-                        map_data[int(entity[4])][int(entity[3])] = {"char": entity[8], "color": entity[5]}
-                elif message.startswith("TEXT:"):
-                    text = message[5:]
+            entities = [entity.split(":") for entity in data[4:].split("|")]
+            for entity in entities:
+                map_data[int(entity[4])][int(entity[3])] = {"char": entity[8], "color": entity[5]}
+        elif data.startswith("TEXT:"):
+            text = data[5:]
 
 def draw_map(stdscr, client_socket):
     curses.start_color()

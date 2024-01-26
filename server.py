@@ -4,78 +4,35 @@ import time
 import random
 import queue
 
-# Server configuration
-HOST = 'localhost'
+from entity import Entity
+
+HOST = "localhost"
 PORT = 12345
 
-size_y = 16
-size_x = 30
-refresh_rate = 0.09
-chunk_size = 1024
+SIZE_X, SIZE_Y = 24, 16
+CHUNK_SIZE = 1024
+REFRESH_RATE = 0.2
+COLORS = ["GREY", "RED", "GREEN", "YELLOW", "BLUE", "MAGENTA", "CYAN", "PURPLE", "PINK"]
 
-lock = threading.Lock()
-elock = threading.Lock()
+def init_player(client):
+    random_x = random.randint(1, SIZE_X-2)
+    random_y = random.randint(1, SIZE_Y-2)
 
-colors = ["GREY", "RED", "GREEN", "YELLOW", "BLUE", "MAGENTA", "CYAN", "PURPLE", "PINK"]
+    player = Entity(
+        id = client.getpeername(),
+        name = "John",
+        type_ = "player",
+        x = random_x,
+        y = random_y,
+        color = random.choice(COLORS),
+        data = "This is a player.",
+        interact = "Chat",
+    )
 
-class Entity(object):
-    _entities = {}
-
-    def __init__(self, id: str, name: str, type_: str, x: int, y: int, data: str, interact: str, color=random.choice(colors)):
-        self.id = id
-        self.name = name
-        self.type_ = type_
-        self.x = x
-        self.y = y
-        self.color = color
-        self.data = data
-        self.interact = interact
-
-        self.message_queue = queue.Queue()
-
-        Entity._entities[id] = self
-
-    @classmethod
-    def find_by_id(cls, id: str):
-        return cls._entities.get(id)
-
-    @classmethod
-    def get_entities(cls) -> dict:
-        """Class method to get all entities."""
-        return cls._entities
-
-    @classmethod
-    def at_coords(cls, x, y):
-        matches = []
-
-        for entity in cls._entities.values():
-            if entity.x == x and entity.y == y:
-                matches.append(entity)
-
-        return matches
-
-    @classmethod
-    def remove_entity(cls, id: str) -> bool:
-        """Class method to remove an entity by its ID."""
-        if id in cls._entities:
-            del cls._entities[id]
-            return True
-        return False
-
-    def char(self):
-        if self.type_ == "player":
-            return "P"
-        if self.type_ == "border":
-            return "#"
-
-    def enqueue_text_message(self, message):
-        self.message_queue.put(message)
-
-    def __str__(self):
-        return f"{self.id}:{self.name}:{self.type_}:{self.x}:{self.y}:{self.color}:{self.data}:{self.interact}:{self.char()}"
+    return player
 
 def move_player(player, key):
-    new_x, new_y = player.x, player.y
+    new_x, new_y = player.x, player.y 
 
     if key == "w":
         new_y -= 1
@@ -86,116 +43,86 @@ def move_player(player, key):
     if key == "d":
         new_x += 1
 
-    entities = Entity.at_coords(new_x, new_y)
-    if len(entities) > 0:
-        entity = entities[0]
-        if entity.type_ == "border":
-            player.enqueue_text_message("You can not move there :(")
-        if entity.type_ == "player":
-            player.enqueue_text_message(f"It's {entity.name}!")
+    entity = Entity.at_coords(new_x, new_y)
+    if entity:
+        player.enqueue_message(entity.interact)
     else:
-        player.y, player.x = new_y, new_x
+        player.x, player.y = new_x, new_y
 
-def initialize_player(client_socket, player_id):
-    random_x = random.randint(1, size_x-2)
-    random_y = random.randint(1, size_y-2)
-
-    player = Entity(
-        id = player_id,
-        name = "John",
-        type_ = "player",
-        x = random_x,
-        y = random_y,
-        color = random.choice(colors),
-        data = "This is another player.",
-        interact = "Chat",
-    )
-
-    return player
-
-def send_map_data(client_socket, entity_id):
+def send_data(client, player):
     try:
         while True:
-            # Send the map data to the player
-            if client_socket.fileno() == -1:
+            if client.fileno() == -1:
                 break
 
             entities = []
-
             for id, entity in Entity.get_entities().items():
                 entities.append(entity.__str__())
 
-            entities = "MAP:" + "|".join(entities) + ":END"
-            for i in range(0, len(entities), chunk_size):
-                chunk = entities[i:i+chunk_size]
-                print(len(chunk))
-                client_socket.send(chunk.encode())
+            map_data = "MAP:" + "|".join(entities) + ":END"
 
-            entity = Entity.find_by_id(entity_id)
             try:
-                text_message = entity.message_queue.get(timeout=0.1)
-                client_socket.send(f"TEXT:{text_message}:END".encode())
+                #message = player.message_queue.get(timeout=0.1)
+                text_data = "TEXT:" + player.message_queue.get_nowait() + ":END"
             except queue.Empty:
-                pass
+                text_data = ""
 
-            time.sleep(refresh_rate)  # Adjust the update frequency
+            data = map_data + text_data
+
+            ## Breaking data into chunks of CHUNK_SIZE bytes to be sent in segments across TCP stream
+            for i in range(0, len(data), CHUNK_SIZE):
+                chunk = data[i:i+CHUNK_SIZE]
+                print(len(chunk), chunk)
+                client.send(chunk.encode())
+
+            time.sleep(REFRESH_RATE)
 
     except (BrokenPipeError, ConnectionResetError):
         print("Player disconnected.")
     finally:
-        # Close the socket when the loop exits
-        client_socket.close()
+        client.close()
 
-def handle_player(client_socket, address):
-    print(f"Accepted connection from {address}")
-
-    player = initialize_player(client_socket, address)
-
-    # Create a thread to constantly send map data to the player
-    map_sender_thread = threading.Thread(target=send_map_data, args=(client_socket,player.id))
-    map_sender_thread.start()
-
+def receive_data(client, player):
     try:
         while True:
-            # Receive player data (if needed)
-            data = client_socket.recv(1024)
+            data = client.recv(1024)
 
-            # Process player data (if needed)
             if not data:
                 break
 
-            user_input = data.decode()
-            print(f"Received input from {address}: {user_input}")
-            if user_input == "q":
-                print(f"Player {address} has disconnected.")
+            key = data.decode()
+            print(f"Received input from {client.getpeername()}: {key}")
+
+            if key == "q":
+                print(f"Player {client.getpeername()} has disconnected.")
                 break
 
-            if user_input in ["w", "a", "s", "d"]:
-                move_player(player, user_input)
-                
-
-    except (BrokenPipeError, ConnectionResetError):
-        print(f"Connection with {address} closed.")
+            if key in ["w", "a", "s" , "d"]:
+                move_player(player, key)
+            
+    except (BrokenPipeError, ConnectionError):
+        print(f"Connection with {client.getpeername()} closed.")
     finally:
-        # Close the socket when the loop exits
-        
-        #set_map_data(player_data["x"], player_data["y"], "#")
-        Entity.remove_entity(address)
+        Entity.remove_entity(client.getpeername())
 
-        client_socket.close()
 
-def start_server():
-    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server.bind((HOST, PORT))
-    server.listen()
 
-    print(f"Server listening on {HOST}:{PORT}")
+def handle_player(client):
+    print(f"Accepted connection from {client.getpeername()}")
 
-    ## Init map
-    for y in range(size_y):
-        for x in range(size_x):
-            if y == 0 or x == 0 or x == size_x - 1 or y == size_y - 1:
+    player = init_player(client)
+
+    data_sender = threading.Thread(target=send_data, args=(client,player))
+    data_sender.start()
+
+    data_receiver = threading.Thread(target=receive_data, args=(client,player))
+    data_receiver.start()
+
+def init_entities():
+    """Generates border entities around the map."""
+    for y in range(SIZE_Y):
+        for x in range(SIZE_X):
+            if x == 0 or x == SIZE_X - 1 or y == 0 or y == SIZE_Y - 1:
                 entity = Entity(
                     id = f"BORDER{x}{y}",
                     name = "Border",
@@ -204,15 +131,23 @@ def start_server():
                     y = y,
                     color = "GREY",
                     data = "A border.",
-                    interact = "a",
-                ) 
+                    interact = "You can't go there ;(",
+                )
 
+def start_server():
+    server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    ## Allows us to use the same IP & Port without having to kill running Python instances manually
+    server.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    server.bind((HOST, PORT))
+    server.listen()
+    print(f"Server listening on {HOST}:{PORT}")
+
+    init_entities()
 
     while True:
-        client_socket, address = server.accept()
-        
-        # Create a new thread to handle the player
-        player_handler = threading.Thread(target=handle_player, args=(client_socket, address))
+        client, address = server.accept()
+
+        player_handler = threading.Thread(target=handle_player, args=(client,))
         player_handler.start()
 
 if __name__ == "__main__":
