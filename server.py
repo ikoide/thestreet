@@ -9,9 +9,9 @@ from entity import Entity
 HOST = "localhost"
 PORT = 12345
 
-SIZE_X, SIZE_Y = 24, 16
+SIZE_X, SIZE_Y = 30, 16
 CHUNK_SIZE = 1024
-REFRESH_RATE = 0.2
+REFRESH_RATE = 0.1
 COLORS = ["GREY", "RED", "GREEN", "YELLOW", "BLUE", "MAGENTA", "CYAN", "PURPLE", "PINK"]
 
 def init_player(client):
@@ -27,20 +27,21 @@ def init_player(client):
         color = random.choice(COLORS),
         data = "This is a player.",
         interact = "Chat",
+        socket = client
     )
 
     return player
 
-def move_player(player, key):
+def move_player(player, user_input):
     new_x, new_y = player.x, player.y 
 
-    if key == "w":
+    if user_input == "w":
         new_y -= 1
-    if key == "a":
+    if user_input == "a":
         new_x -= 1
-    if key == "s":
+    if user_input == "s":
         new_y += 1
-    if key == "d":
+    if user_input == "d":
         new_x += 1
 
     entity = Entity.at_coords(new_x, new_y)
@@ -63,7 +64,7 @@ def send_data(client, player):
 
             try:
                 #message = player.message_queue.get(timeout=0.1)
-                text_data = "TEXT:" + player.message_queue.get_nowait() + ":END"
+                text_data = "UTEXT:" + player.message_queue.get_nowait() + ":END"
             except queue.Empty:
                 text_data = ""
 
@@ -72,7 +73,6 @@ def send_data(client, player):
             ## Breaking data into chunks of CHUNK_SIZE bytes to be sent in segments across TCP stream
             for i in range(0, len(data), CHUNK_SIZE):
                 chunk = data[i:i+CHUNK_SIZE]
-                print(len(chunk), chunk)
                 client.send(chunk.encode())
 
             time.sleep(REFRESH_RATE)
@@ -83,6 +83,7 @@ def send_data(client, player):
         client.close()
 
 def receive_data(client, player):
+    address = client.getpeername()
     try:
         while True:
             data = client.recv(1024)
@@ -90,22 +91,29 @@ def receive_data(client, player):
             if not data:
                 break
 
-            key = data.decode()
-            print(f"Received input from {client.getpeername()}: {key}")
+            user_input = data.decode()
+            print(f"Received input from {client.getpeername()}: {user_input}")
 
-            if key == "q":
+            if user_input.startswith("CHAT:"):
+                message = user_input[5:]
+                players = Entity.by_type("player") 
+                for player in players:
+                    try:
+                        player.socket.send(("CHAT:" + player.name + ": " + message + ":END").encode())
+                    except socket.error:
+                        pass
+
+            if user_input == "q":
                 print(f"Player {client.getpeername()} has disconnected.")
                 break
 
-            if key in ["w", "a", "s" , "d"]:
-                move_player(player, key)
+            if user_input in ["w", "a", "s" , "d"]:
+                move_player(player, user_input)
             
     except (BrokenPipeError, ConnectionError):
-        print(f"Connection with {client.getpeername()} closed.")
+        print(f"Connection with {address} closed.")
     finally:
-        Entity.remove_entity(client.getpeername())
-
-
+        Entity.remove_entity(address)
 
 def handle_player(client):
     print(f"Accepted connection from {client.getpeername()}")

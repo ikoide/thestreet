@@ -6,7 +6,7 @@ COLORS = ["GREY", "RED", "GREEN", "YELLOW", "BLUE", "MAGENTA", "CYAN", "PURPLE",
 class Entity(object):
     _entities = {}
 
-    def __init__(self, id: str, name: str, type_: str, x: int, y: int, data: str, interact: str, color=random.choice(COLORS)):
+    def __init__(self, id: str, name: str, type_: str, x: int, y: int, data: str, interact: str, socket=None, color=random.choice(COLORS)):
         self.id = id
         self.name = name
         self.type_ = type_
@@ -17,6 +17,7 @@ class Entity(object):
         self.interact = interact
 
         self.message_queue = queue.Queue()
+        self.socket = socket
 
         ## Add new Entity object to _entities Class list
         Entity._entities[id] = self
@@ -40,6 +41,10 @@ class Entity(object):
                 matches.append(entity)
 
         return matches[0] if len(matches) > 0 else None
+
+    @classmethod
+    def by_type(cls, type_: str) -> list:
+        return [entity for entity in cls._entities.values() if entity.type_ == type_]
 
     @classmethod
     def remove_entity(cls, id: str) -> bool:
