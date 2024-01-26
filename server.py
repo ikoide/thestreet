@@ -12,6 +12,7 @@ PORT = 12345
 SIZE_X, SIZE_Y = 30, 16
 CHUNK_SIZE = 1024
 REFRESH_RATE = 0.1
+PROXIMITY_DISTANCE = 5
 COLORS = ["GREY", "RED", "GREEN", "YELLOW", "BLUE", "MAGENTA", "CYAN", "PURPLE", "PINK"]
 
 def init_player(client):
@@ -96,12 +97,19 @@ def receive_data(client, player):
 
             if user_input.startswith("CHAT:"):
                 message = user_input[5:]
+
                 players = Entity.by_type("player") 
-                for player in players:
-                    try:
-                        player.socket.send(("CHAT:" + player.name + ": " + message + ":END").encode())
-                    except socket.error:
-                        pass
+                for player_ in players:
+                    distance = abs(player.x - player_.x) + abs(player.y - player_.y)
+
+                    if distance <= PROXIMITY_DISTANCE:
+                        try:
+                            player_.socket.send(("CHAT:" + player.name + ": " + message + ":END").encode())
+                        except socket.error:
+                            pass
+
+            if user_input.startswith("NAME:"):
+                player.name = user_input[5:] 
 
             if user_input == "q":
                 print(f"Player {client.getpeername()} has disconnected.")

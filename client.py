@@ -110,12 +110,34 @@ def draw_map(stdscr, client_socket):
             else:
                 client_socket.send(chr(user_input).encode())
 
+def get_user_input(stdscr, prompt):
+    stdscr.clear()
+    stdscr.addstr(0, 0, prompt)
+    stdscr.refresh()
+
+    curses.echo()
+    input_window = curses.newwin(1, curses.COLS - len(prompt) - 1, 0, len(prompt))
+    input_window.keypad(True)
+
+    user_input = input_window.getstr(0, 0)
+
+    curses.noecho()
+    input_window.keypad(False)
+
+    return user_input
+
 def main(stdscr):
     curses.curs_set(0)  # Hide the cursor
     stdscr.nodelay(1)   # Set non-blocking mode for getch
 
+    prompt = "Handle: "
+    user_input = b"NAME:" + get_user_input(stdscr, prompt)
+
+    init_map()
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client_socket:
         client_socket.connect((SERVER_HOST, SERVER_PORT))
+        client_socket.send(user_input)
 
         # Run the map refresh loop
         process_thread = threading.Thread(target=process_data, args=(stdscr, client_socket))
@@ -124,5 +146,4 @@ def main(stdscr):
         draw_map(stdscr, client_socket)
 
 if __name__ == "__main__":
-    map_data = init_map()
     curses.wrapper(main)
