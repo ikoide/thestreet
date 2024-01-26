@@ -4,20 +4,20 @@ import time
 import random
 import queue
 
-from entity import Entity
+from entity import Entity, Room
 
 HOST = "localhost"
 PORT = 12345
 
-SIZE_X, SIZE_Y = 30, 16
 CHUNK_SIZE = 1024
 REFRESH_RATE = 0.1
-PROXIMITY_DISTANCE = 5
+PROXIMITY_DISTANCE = 8
 COLORS = ["GREY", "RED", "GREEN", "YELLOW", "BLUE", "MAGENTA", "CYAN", "PURPLE", "PINK"]
 
 def init_player(client):
-    random_x = random.randint(1, SIZE_X-2)
-    random_y = random.randint(1, SIZE_Y-2)
+    room = Room.find_by_name("spawn")
+    random_x = random.randint(1, room.width-2)
+    random_y = random.randint(1, room.height-2)
 
     player = Entity(
         id = client.getpeername(),
@@ -58,10 +58,12 @@ def send_data(client, player):
                 break
 
             entities = []
-            for id, entity in Entity.get_entities().items():
+            e = Entity.filter_by_attribute("room", player.room).items()
+            for id, entity in e:
                 entities.append(entity.__str__())
 
-            map_data = "MAP:" + "|".join(entities) + ":END"
+            map_data = "ROOM:" + "|".join(entities) + ":END"
+            player_data = "PLAY:" + player.__str__() + ":END"
 
             try:
                 #message = player.message_queue.get(timeout=0.1)
@@ -69,11 +71,17 @@ def send_data(client, player):
             except queue.Empty:
                 text_data = ""
 
-            data = map_data + text_data
-
             ## Breaking data into chunks of CHUNK_SIZE bytes to be sent in segments across TCP stream
-            for i in range(0, len(data), CHUNK_SIZE):
-                chunk = data[i:i+CHUNK_SIZE]
+            for i in range(0, len(map_data), CHUNK_SIZE):
+                chunk = map_data[i:i+CHUNK_SIZE]
+                client.send(chunk.encode())
+
+            for i in range(0, len(text_data), CHUNK_SIZE):
+                chunk = text_data[i:i+CHUNK_SIZE]
+                client.send(chunk.encode())
+
+            for i in range(0, len(player_data), CHUNK_SIZE):
+                chunk = player_data[i:i+CHUNK_SIZE]
                 client.send(chunk.encode())
 
             time.sleep(REFRESH_RATE)
@@ -104,7 +112,7 @@ def receive_data(client, player):
 
                     if distance <= PROXIMITY_DISTANCE:
                         try:
-                            player_.socket.send(("CHAT:" + player.name + ": " + message + ":END").encode())
+                            player_.socket.send(("CHAT:" + player.color + ":" + player.name + ": " + message + ":END").encode())
                         except socket.error:
                             pass
 
@@ -134,22 +142,6 @@ def handle_player(client):
     data_receiver = threading.Thread(target=receive_data, args=(client,player))
     data_receiver.start()
 
-def init_entities():
-    """Generates border entities around the map."""
-    for y in range(SIZE_Y):
-        for x in range(SIZE_X):
-            if x == 0 or x == SIZE_X - 1 or y == 0 or y == SIZE_Y - 1:
-                entity = Entity(
-                    id = f"BORDER{x}{y}",
-                    name = "Border",
-                    type_ = "border",
-                    x = x,
-                    y = y,
-                    color = "GREY",
-                    data = "A border.",
-                    interact = "You can't go there ;(",
-                )
-
 def start_server():
     server = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     ## Allows us to use the same IP & Port without having to kill running Python instances manually
@@ -158,7 +150,7 @@ def start_server():
     server.listen()
     print(f"Server listening on {HOST}:{PORT}")
 
-    init_entities()
+    room = Room(name="spawn", width=30, height=16)
 
     while True:
         client, address = server.accept()
