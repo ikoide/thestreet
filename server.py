@@ -28,7 +28,8 @@ def init_player(client):
         color = random.choice(COLORS),
         data = "This is a player.",
         interact = "Chat",
-        socket = client
+        socket = client,
+        room = "spawn"
     )
 
     return player
@@ -45,8 +46,13 @@ def move_player(player, user_input):
     if user_input == "d":
         new_x += 1
 
-    entity = Entity.at_coords(new_x, new_y)
-    if entity:
+    entity = Entity.at_coords(player.room, new_x, new_y)
+    if entity and entity.type_ == "entrance":
+        call = entity.interact
+        method_name, arg = call.split(".")
+        ref = getattr(entity, method_name, None)
+        ref(arg, player)
+    elif entity and entity.type_ == "border":
         player.enqueue_message(entity.interact)
     else:
         player.x, player.y = new_x, new_y
@@ -58,9 +64,13 @@ def send_data(client, player):
                 break
 
             entities = []
-            e = Entity.filter_by_attribute("room", player.room).items()
-            for id, entity in e:
+            e = Entity.in_room(player.room)
+            print(player.room)
+            #e = Entity.get_entities().items()
+            for entity in e:
                 entities.append(entity.__str__())
+
+            print(entities)
 
             map_data = "ROOM:" + "|".join(entities) + ":END"
             player_data = "PLAY:" + player.__str__() + ":END"
@@ -150,7 +160,22 @@ def start_server():
     server.listen()
     print(f"Server listening on {HOST}:{PORT}")
 
-    room = Room(name="spawn", width=30, height=16)
+    spawn = Room(name="spawn", width=30, height=16)
+    x, y = 0, 8
+    spawn.update_entity_at_pos("spawn", x, y)
+    Entity(
+        id = f"ENTRANCE{x}{y}",
+        name = "black_sun",
+        type_ = "entrance",
+        x = x,
+        y = y,
+        color = "GREEN",
+        data = "data",
+        interact = "to_room.black_sun",
+        room = "spawn"
+    )
+
+    black_sun = Room(name="black_sun", width=30, height=16)
 
     while True:
         client, address = server.accept()

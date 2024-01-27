@@ -6,7 +6,7 @@ COLORS = ["GREY", "RED", "GREEN", "YELLOW", "BLUE", "MAGENTA", "CYAN", "PURPLE",
 class Entity(object):
     _entities = {}
 
-    def __init__(self, id: str, name: str, type_: str, x: int, y: int, data: str, interact: str, socket=None, color=random.choice(COLORS), room="spawn"):
+    def __init__(self, id: str, name: str, type_: str, x: int, y: int, data: str, interact: str, room, socket=None, color=random.choice(COLORS), dest_room=None):
         self.id = id
         self.name = name
         self.type_ = type_
@@ -16,6 +16,7 @@ class Entity(object):
         self.data = data
         self.interact = interact
         self.room = room
+        self.dest_room = dest_room
 
         self.message_queue = queue.Queue()
         self.socket = socket
@@ -33,19 +34,19 @@ class Entity(object):
         return cls._entities
 
     @classmethod
-    def at_coords(cls, x, y):
+    def at_coords(cls, room, x, y):
         """Returns list of entities currently situated on (x,y) coord."""
         matches = []
 
         for entity in cls._entities.values():
-            if entity.x == x and entity.y == y:
+            if entity.x == x and entity.y == y and entity.room == room:
                 matches.append(entity)
 
         return matches[0] if len(matches) > 0 else None
 
     @classmethod
-    def filter_by_attribute(cls, attribute, value):
-        return {key: item for key, item in cls._entities.items() if getattr(item, attribute, None) == value}
+    def in_room(cls, room_name):
+        return [entity for entity in cls._entities.values() if entity.room == room_name]
 
     @classmethod
     def by_type(cls, type_: str) -> list:
@@ -74,17 +75,26 @@ class Entity(object):
     def enqueue_message(self, message):
         self.message_queue.put(message)
 
+    def to_room(self, room_name, player):
+        room = Room.find_by_name(room_name)
+        player.room = room.name
+        player.x = room.spawn_x
+        player.y = room.spawn_y
+
     def __str__(self):
-        return f"{self.id}:{self.name}:{self.type_}:{self.x}:{self.y}:{self.color}:{self.data}:{self.interact}:{self.char()}"
+        return f"{self.id}:{self.name}:{self.type_}:{self.x}:{self.y}:{self.color}:{self.data}:{self.interact}:{self.char()}:{self.room}"
 
 class Room(object):
     _rooms = {}
 
-    def __init__(self, name, width=32, height=16):
+    def __init__(self, name, width=32, height=16, spawn_x=10, spawn_y=10):
         self.name = name
         self.width = width
         self.height = height
-        self.map_data = self.generate_map()
+        self.spawn_x = spawn_x
+        self.spawn_y = spawn_y
+
+        self.generate_map()
 
         Room._rooms[name] = self
 
@@ -97,14 +107,17 @@ class Room(object):
         """Returns all rooms."""
         return cls._rooms
 
+    def update_entity_at_pos(self, room, x, y):
+        entity = Entity.at_coords(room, x, y)
+        print(entity)
+        Entity.remove_entity(entity.id)
+
     def generate_map(self):
-        map_data = [[' ' for _ in range(self.width)] for _ in range(self.height)]
-    
         for y in range(self.height):
             for x in range(self.width):
                 if x == 0 or x == self.width - 1 or y == 0 or y == self.height - 1:
                     entity = Entity(
-                        id = f"BORDER{x}{y}",
+                        id = f"BORDER{self.name}{x}{y}",
                         name = "Border",
                         type_ = "border",
                         x = x,
@@ -115,7 +128,4 @@ class Room(object):
                         room = self.name
                     )
 
-        return map_data
-
-    def get_map_data(self):
-        return self.map_data
+        return None

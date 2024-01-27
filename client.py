@@ -67,7 +67,6 @@ def process_data(stdscr, client_socket):
                 elif message.startswith("UTEXT:"):
                     user_messages.append(message[6:])
                 elif message.startswith("CHAT:"):
-                    logging.debug(message)
                     chat_messages.append(message[5:])
 
 def draw_map(stdscr, client_socket):
@@ -94,7 +93,6 @@ def draw_map(stdscr, client_socket):
 
         stdscr.addstr(0, size_x+32, "Chat [Global]")
         for i, j in enumerate(chat_messages[-size_y+1:]):
-            logging.debug(j)
             color, name, text = j.split(":")[0], j.split(":")[1], j.split(":")[2]
             pair_id = list(COLOR_PAIRS.keys()).index(color) + 1
             stdscr.addstr(i+1, size_x+32, name + ":", curses.color_pair(pair_id) | curses.A_BOLD)
@@ -107,7 +105,6 @@ def draw_map(stdscr, client_socket):
         for i, j in enumerate(user_messages[-size_y+1:]):
             stdscr.addstr(i+1, size_x+1, j)
 
-        # Refresh the screen
         #stdscr.refresh()
         curses.doupdate()
 
