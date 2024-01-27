@@ -1,2 +1,4 @@
 venv/
 client_debug.log
+*.pyc
+__pycache__/
