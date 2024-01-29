@@ -16,7 +16,8 @@ player = {
     "x": 0,
     "y": 0,
     "name": "",
-    "color": "GREY"
+    "color": "GREY",
+    "room": "",
 }
 
 size_y = 16
@@ -28,10 +29,8 @@ COLOR_PAIRS = {
     "GREEN": (curses.COLOR_GREEN, curses.COLOR_BLACK),
     "YELLOW": (curses.COLOR_YELLOW, curses.COLOR_BLACK),
     "BLUE": (curses.COLOR_BLUE, curses.COLOR_BLACK),
-    "MAGENTA": (curses.COLOR_MAGENTA, curses.COLOR_BLACK),
     "CYAN": (curses.COLOR_CYAN, curses.COLOR_BLACK),
     "PURPLE": (curses.COLOR_MAGENTA, curses.COLOR_BLACK),
-    "PINK": (curses.COLOR_RED, curses.COLOR_BLACK),
 }
 
 def init_map():
@@ -68,6 +67,7 @@ def process_data(stdscr, client_socket):
                     player["y"] = entity[3]
                     player["name"] = entity[1]
                     player["color"] = entity[5]
+                    player["room"] = entity[9]
                 elif message.startswith("UTEXT:"):
                     user_messages.append(message[6:])
                 elif message.startswith("CHAT:"):
@@ -96,27 +96,23 @@ def draw_map(stdscr, client_socket):
                 pair_id = list(COLOR_PAIRS.keys()).index(color) + 1
                 stdscr.addstr(i, j, char, curses.color_pair(pair_id))
 
-        stdscr.addstr(0, size_x+32, "Chat [Global]")
+        stdscr.addstr(0, size_x+48, "Chat [Global]")
         for i, j in enumerate(chat_messages[-size_y+1:]):
-            logging.debug(j)
             color, name, text = j.split(":")[0], j.split(":")[1], j.split(":")[2]
             pair_id = list(COLOR_PAIRS.keys()).index(color) + 1
-            #stdscr.addstr(i+1, size_x+32, name + ":" + text, curses.color_pair(pair_id))
-            stdscr.addstr(i+1, size_x+32, name + ":", curses.color_pair(pair_id) | curses.A_BOLD)
-            stdscr.addstr(" " + text, curses.color_pair(pair_id))
+            stdscr.addstr(i+1, size_x+48, name, curses.color_pair(pair_id) | curses.A_BOLD)
+            stdscr.addstr(":" + text)
 
         pair_id = list(COLOR_PAIRS.keys()).index(player["color"]) + 1
-        stdscr.addstr(0, size_x+1, "Info [")
+        stdscr.addstr(0, size_x+1, f"[{player['room'].replace('_', ' ').title()}] [")
         stdscr.addstr(player['name'], curses.color_pair(pair_id) | curses.A_BOLD)
         stdscr.addstr("]")
         for i, j in enumerate(user_messages[-size_y+1:]):
             stdscr.addstr(i+1, size_x+1, j)
 
         # Refresh the screen
-        #stdscr.refresh()
         curses.doupdate()
 
-        #stdscr.addstr(player["room"].capitalize(), curses.color_pair("BLACK"))
         user_input = stdscr.getch()
 
         if user_input != curses.ERR:

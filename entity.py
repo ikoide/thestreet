@@ -92,7 +92,7 @@ class Entity(object):
 class Room(object):
     _rooms = {}
 
-    def __init__(self, name, width, height, spawn_x=10, spawn_y=10, whitelist=None):
+    def __init__(self, name, width, height, spawn_x=10, spawn_y=10, whitelist=None, max_players=16):
         self.name = name
         self.width = width
         self.height = height
@@ -109,7 +109,7 @@ class Room(object):
         return cls._rooms.get(name)
     
     @classmethod
-    def get_entities(cls) -> dict:
+    def get_rooms(cls) -> dict:
         """Returns all rooms."""
         return cls._rooms
 
