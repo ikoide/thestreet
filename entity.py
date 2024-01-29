@@ -75,11 +75,16 @@ class Entity(object):
     def enqueue_message(self, message):
         self.message_queue.put(message)
 
-    def to_room(self, room_name, player):
+    def to_room(self, room_name, player, coords):
         room = Room.find_by_name(room_name)
-        player.room = room.name
-        player.x = room.spawn_x
-        player.y = room.spawn_y
+        if room.whitelist and player.name not in room.whitelist:
+            return "Fuck you."
+        else:
+            player.room = room.name
+            player.x = coords[0]
+            player.y = coords[1]
+
+            return f"You have entered {room.name}."
 
     def __str__(self):
         return f"{self.id}:{self.name}:{self.type_}:{self.x}:{self.y}:{self.color}:{self.data}:{self.interact}:{self.char()}:{self.room}"
@@ -87,12 +92,13 @@ class Entity(object):
 class Room(object):
     _rooms = {}
 
-    def __init__(self, name, width=32, height=16, spawn_x=10, spawn_y=10):
+    def __init__(self, name, width, height, spawn_x=10, spawn_y=10, whitelist=None):
         self.name = name
         self.width = width
         self.height = height
         self.spawn_x = spawn_x
         self.spawn_y = spawn_y
+        self.whitelist = whitelist
 
         self.generate_map()
 
@@ -109,7 +115,6 @@ class Room(object):
 
     def update_entity_at_pos(self, room, x, y):
         entity = Entity.at_coords(room, x, y)
-        print(entity)
         Entity.remove_entity(entity.id)
 
     def generate_map(self):

@@ -49,9 +49,9 @@ def move_player(player, user_input):
     entity = Entity.at_coords(player.room, new_x, new_y)
     if entity and entity.type_ == "entrance":
         call = entity.interact
-        method_name, arg = call.split(".")
+        method_name, arg, x, y = call.split(".")
         ref = getattr(entity, method_name, None)
-        ref(arg, player)
+        player.enqueue_message(ref(arg, player, [int(x),int(y)]))
     elif entity and entity.type_ == "border":
         player.enqueue_message(entity.interact)
     else:
@@ -65,14 +65,11 @@ def send_data(client, player):
 
             entities = []
             e = Entity.in_room(player.room)
-            print(player.room)
             #e = Entity.get_entities().items()
             for entity in e:
                 entities.append(entity.__str__())
 
-            print(entities)
-
-            map_data = "ROOM:" + "|".join(entities) + ":END"
+            map_data = f"ROOM:" + "|".join(entities) + ":END"
             player_data = "PLAY:" + player.__str__() + ":END"
 
             try:
@@ -118,13 +115,14 @@ def receive_data(client, player):
 
                 players = Entity.by_type("player") 
                 for player_ in players:
-                    distance = abs(player.x - player_.x) + abs(player.y - player_.y)
+                    if player_.room == player.room:
+                        distance = abs(player.x - player_.x) + abs(player.y - player_.y)
 
-                    if distance <= PROXIMITY_DISTANCE:
-                        try:
-                            player_.socket.send(("CHAT:" + player.color + ":" + player.name + ": " + message + ":END").encode())
-                        except socket.error:
-                            pass
+                        if distance <= PROXIMITY_DISTANCE:
+                            try:
+                                player_.socket.send(("CHAT:" + player.color + ":" + player.name + ": " + message + ":END").encode())
+                            except socket.error:
+                                pass
 
             if user_input.startswith("NAME:"):
                 player.name = user_input[5:] 
@@ -160,22 +158,64 @@ def start_server():
     server.listen()
     print(f"Server listening on {HOST}:{PORT}")
 
-    spawn = Room(name="spawn", width=30, height=16)
+    spawn = Room(name="spawn", width=30, height=16, spawn_x=1, spawn_y=8)
     x, y = 0, 8
     spawn.update_entity_at_pos("spawn", x, y)
     Entity(
-        id = f"ENTRANCE{x}{y}",
-        name = "black_sun",
+        id = f"ENTRANCEspawn{x}{y}",
+        name = "black_sun_entrance",
         type_ = "entrance",
         x = x,
         y = y,
         color = "GREEN",
         data = "data",
-        interact = "to_room.black_sun",
-        room = "spawn"
+        interact = "to_room.black_sun_entrance.28.8",
+        room = "spawn",
     )
 
-    black_sun = Room(name="black_sun", width=30, height=16)
+    black_sun_entrance = Room(name="black_sun_entrance", width=30, height=16, spawn_x=28, spawn_y=8, whitelist=["Hiro", "Da5id"])
+
+    x, y = 29, 8
+    black_sun_entrance.update_entity_at_pos("black_sun_entrance", x, y)
+    Entity(
+        id = f"ENTRANCEblack_sun_entrance{x}{y}",
+        name = "black_sun_entrance",
+        type_ = "entrance",
+        x = x,
+        y = y,
+        color = "GREEN",
+        data = "data",
+        interact = "to_room.spawn.1.8",
+        room = "black_sun_entrance"
+    )
+
+
+    black_sun_entrance.update_entity_at_pos("black_sun_entrance", 0, 8)
+    Entity(
+        id = f"ENTRANCEblack_sun_entrance{0}{8}",
+        name = "black_sun_entrance_main",
+        type_ = "entrance",
+        x = 0,
+        y = 8,
+        color = "GREEN",
+        data = "data",
+        interact = "to_room.black_sun_main.28.8",
+        room = "black_sun_entrance"
+    )
+
+    black_sun_main = Room(name="black_sun_main", width=30, height=16, spawn_x=28, spawn_y=8, whitelist=["Hiro", "Da5id"])
+    black_sun_main.update_entity_at_pos("black_sun_main", x, y)
+    Entity(
+        id = f"ENTRANCEblack_sun_main{x}{y}",
+        name = "black_sun_main",
+        type_ = "entrance",
+        x = x,
+        y = y,
+        color = "GREEN",
+        data = "data",
+        interact = "to_room.black_sun_entrance.1.8",
+        room = "black_sun_main"
+    )
 
     while True:
         client, address = server.accept()

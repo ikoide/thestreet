@@ -13,6 +13,8 @@ map_data = []
 user_messages = []
 chat_messages = []
 player = {
+    "x": 0,
+    "y": 0,
     "name": "",
     "color": "GREY"
 }
@@ -57,16 +59,19 @@ def process_data(stdscr, client_socket):
                 if message.startswith("ROOM:"):
                     map_data = init_map()
 
-                    entities = [entity.split(":") for entity in message[5:].split("|")]
+                    entities = [entity.split(":") for entity in message.split(":", 1)[1].split("|")]
                     for entity in entities:
                         map_data[int(entity[4])][int(entity[3])] = {"char": entity[8], "color": entity[5]}
+
                 elif message.startswith("PLAY:"):
-                    player_data = message[5:].split(":") 
-                    player["name"] = player_data[1]
-                    player["color"] = player_data[5]
+                    player["x"] = entity[4]
+                    player["y"] = entity[3]
+                    player["name"] = entity[1]
+                    player["color"] = entity[5]
                 elif message.startswith("UTEXT:"):
                     user_messages.append(message[6:])
                 elif message.startswith("CHAT:"):
+                    logging.debug(message)
                     chat_messages.append(message[5:])
 
 def draw_map(stdscr, client_socket):
@@ -93,10 +98,12 @@ def draw_map(stdscr, client_socket):
 
         stdscr.addstr(0, size_x+32, "Chat [Global]")
         for i, j in enumerate(chat_messages[-size_y+1:]):
+            logging.debug(j)
             color, name, text = j.split(":")[0], j.split(":")[1], j.split(":")[2]
             pair_id = list(COLOR_PAIRS.keys()).index(color) + 1
+            #stdscr.addstr(i+1, size_x+32, name + ":" + text, curses.color_pair(pair_id))
             stdscr.addstr(i+1, size_x+32, name + ":", curses.color_pair(pair_id) | curses.A_BOLD)
-            stdscr.addstr("" + text)
+            stdscr.addstr(" " + text, curses.color_pair(pair_id))
 
         pair_id = list(COLOR_PAIRS.keys()).index(player["color"]) + 1
         stdscr.addstr(0, size_x+1, "Info [")
@@ -105,10 +112,11 @@ def draw_map(stdscr, client_socket):
         for i, j in enumerate(user_messages[-size_y+1:]):
             stdscr.addstr(i+1, size_x+1, j)
 
+        # Refresh the screen
         #stdscr.refresh()
         curses.doupdate()
 
-        # Check for user input without blocking
+        #stdscr.addstr(player["room"].capitalize(), curses.color_pair("BLACK"))
         user_input = stdscr.getch()
 
         if user_input != curses.ERR:
