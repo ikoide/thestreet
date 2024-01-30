@@ -26,7 +26,8 @@ width = 0
 map_data = []
 player_data = {
     "room": "",
-    "name": ""
+    "name": "",
+    "color": "GREY"
 }
 console_messages = []
 chat_messages = []
@@ -105,7 +106,10 @@ def curses_proc(stdscr, client):
                 stdscr.addstr(i, j, char, curses.color_pair(pair_id))
 
         ## Console Section
-        stdscr.addstr(0, width+1, f"Console [{player_data['name']}]")
+        pair_id = list(COLOR_PAIRS.keys()).index(player_data["color"]) + 1
+        stdscr.addstr(0, width+1, "Console [")
+        stdscr.addstr(player_data['name'], curses.color_pair(pair_id) | curses.A_BOLD)
+        stdscr.addstr("]")
         for i, j in enumerate(console_messages[-height+1:]):
             stdscr.addstr(i+1, width+1, j)
 

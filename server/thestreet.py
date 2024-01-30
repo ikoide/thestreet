@@ -97,7 +97,7 @@ def receive_data(player):
 
 def handle_player(client):
     handle = f"John{random.randint(0,100)}"
-    room = Room.find_by_name("spawn")
+    room = Room.find_by_name("street0")
 
     player = Player(
         id = handle,

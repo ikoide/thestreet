@@ -75,6 +75,10 @@ class Entity(object):
         self.room = room
         self.char = char
 
+        entity_query = self.room.at_coords(x, y)
+        if len(entity_query) > 0:
+            self.room.remove_entity(entity_query[0].id)
+
         self.room.entities[id] = self
 
     def get_type(self):
@@ -100,6 +104,17 @@ class Player(Entity):
         self.message_queue = queue.Queue()
         self.socket = socket
 
+    def to_room(self, room_name, x, y):
+        room = Room.find_by_name(room_name)
+        self.room.remove_entity(self.id)
+        self.room = room
+        room.entities[self.id] = self
+
+        self.x = int(x)
+        self.y = int(y)
+
+        return f"You have entered {room_name}."
+
     def move(self, key):
         new_x, new_y = self.x, self.y
 
@@ -117,5 +132,9 @@ class Player(Entity):
             entity = entity_query[0]
             if entity.get_type() == "structure":
                 self.message_queue.put("You can't go there.")
+            if entity.get_type() == "entrance":
+                room_name, x, y = entity.to_room.split("_")
+                self.message_queue.put(self.to_room(room_name, x, y))
+
         if len(entity_query) == 0:
             self.x, self.y = new_x, new_y
