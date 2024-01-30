@@ -12,7 +12,7 @@ PORT = 12345
 CHUNK_SIZE = 1024
 REFRESH_RATE = 0.1
 PROXIMITY_DISTANCE = 8
-COLORS = ["GREY", "RED", "GREEN", "YELLOW", "BLUE", "MAGENTA", "CYAN", "PURPLE", "PINK"]
+COLORS = ["GREY", "RED", "GREEN", "YELLOW", "BLUE", "CYAN", "PURPLE"]
 
 def init_player(client):
     room = Room.find_by_name("spawn")
