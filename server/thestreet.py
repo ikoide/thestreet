@@ -68,7 +68,6 @@ def broadcast_message(message, room=None):
                 player.socket.send(("GMSG:" + message + ":END").encode())
             except socket.error:
                 pass
-     
 
 def receive_data(player):
     try:
@@ -88,6 +87,11 @@ def receive_data(player):
             if meta == "CHAT":
                 broadcast_chat(player, data)
 
+            if meta == "NAME":
+                player.room.remove_entity(player.id)
+                player.room.entities[data] = player
+                player.id = data
+
     except (BrokenPipeError, ConnectionError):
         pass
     finally:
@@ -96,7 +100,7 @@ def receive_data(player):
 
 
 def handle_player(client):
-    handle = f"John{random.randint(0,100)}"
+    handle = f"{random.randint(0,100)}"
     room = Room.find_by_name("street0")
 
     player = Player(

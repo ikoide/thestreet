@@ -84,7 +84,7 @@ def process_data(client):
 
             if meta == "GMSG":
                 chat_messages.append(data)
-                
+
 def curses_proc(stdscr, client):
     curses.start_color()
 
@@ -124,6 +124,10 @@ def curses_proc(stdscr, client):
             except ValueError:
                 stdscr.addstr(j)    
 
+        stdscr.addstr(height, 0, "Input:")
+        if chat:
+            stdscr.addstr(height, 7, message)
+
         #stdscr.refresh()
         curses.doupdate()
 
@@ -140,12 +144,34 @@ def curses_proc(stdscr, client):
             else:
                 client.send(("KEY:" + chr(user_input)).encode())
 
+def get_user_input(stdscr, prompt):
+    stdscr.clear()
+    stdscr.addstr(0, 0, "Welcome to the Street!")
+    stdscr.addstr(1, 0, prompt)
+    stdscr.refresh()
+
+    curses.echo()
+    input_window = curses.newwin(1, curses.COLS - len(prompt) - 1, 1, len(prompt))
+    input_window.keypad(True)
+
+    user_input = input_window.getstr(0, 0)
+
+    curses.noecho()
+    input_window.keypad(False)
+
+    return user_input
+
 def start_client(stdscr):
     curses.curs_set(0)
     stdscr.nodelay(1)
 
+    prompt = "Handle: "
+    user_input = b"NAME:" + get_user_input(stdscr, prompt)
+
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as client_socket:
         client_socket.connect((HOST, PORT))
+
+        client_socket.send(user_input)
 
         ## Initialize thread for processing data from server
         process_thread = threading.Thread(target=process_data, args=(client_socket,))
