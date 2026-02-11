@@ -20,11 +20,12 @@ use street_protocol::{
     ServerTxUpdate, ServerWelcome, ServerWho, TrainInfo,
 };
 use street_world::{
-    distance_to_nearest_door, parse_room_map_id, room_id_for_door, street_door_side,
-    STREET_CIRCUMFERENCE_TILES, STREET_HEIGHT,
+    distance_to_nearest_door, parse_room_map_id, room_customizer_position, room_id_for_door,
+    street_door_side, STREET_CIRCUMFERENCE_TILES, STREET_HEIGHT,
 };
 use street_world::monorail::{
-    is_station_door, parse_station_map_id, parse_train_map_id, station_positions,
+    is_station_door, parse_station_map_id, parse_train_map_id, station_label_for_x,
+    station_positions, station_x_for_coord, station_x_for_label,
 };
 
 use crate::input::InputEvent;
@@ -101,10 +102,10 @@ impl AppState {
             }
             format!("Room {room_id}")
         } else if let Some(station_x) = parse_station_map_id(&self.map_id) {
-            if station_x == station_positions()[0] {
-                "Station Spawn".to_string()
+            if let Some(label) = station_label_for_x(station_x) {
+                format!("Station {label}")
             } else {
-                "Station Opposite".to_string()
+                format!("Station {station_x}")
             }
         } else if let Some(train_id) = parse_train_map_id(&self.map_id) {
             format!("Train {train_id}")
@@ -162,14 +163,11 @@ impl AppState {
         }
 
         if let Some(station_x) = self.door_adjacent_station() {
+            let label = station_label_for_x(station_x).unwrap_or("unknown");
             pages.push(vec![
                 "monorail".to_string(),
                 "enter: step on M".to_string(),
-                if station_x == station_positions()[0] {
-                    "station: spawn".to_string()
-                } else {
-                    "station: opposite".to_string()
-                },
+                format!("station: {label}"),
             ]);
         }
 
@@ -183,7 +181,9 @@ impl AppState {
             if let Some(exit_page) = self.room_exit_page() {
                 pages.push(exit_page);
             }
-            pages.push(room_settings_page());
+            if self.room_customizer_adjacent() {
+                pages.push(room_settings_page());
+            }
         }
 
         if let Some(station_x) = parse_station_map_id(&self.map_id) {
@@ -249,14 +249,7 @@ impl AppState {
         let above = is_station_door(x, y - 1);
         let below = is_station_door(x, y + 1);
         if above || below {
-            let wrapped = (x as i64).rem_euclid(STREET_CIRCUMFERENCE_TILES);
-            let stations = station_positions();
-            if wrapped == stations[0] {
-                return Some(stations[0]);
-            }
-            if wrapped == stations[1] {
-                return Some(stations[1]);
-            }
+            return station_x_for_coord(x);
         }
         None
     }
@@ -303,6 +296,15 @@ impl AppState {
             "exit: The Street".to_string(),
             "step through the door".to_string(),
         ])
+    }
+
+    fn room_customizer_adjacent(&self) -> bool {
+        if parse_room_map_id(&self.map_id).is_none() {
+            return false;
+        }
+        let (cx, cy) = room_customizer_position();
+        let (x, y) = self.position;
+        (x - cx).abs() + (y - cy).abs() == 1
     }
 
     fn request_room_info(&mut self, room_id: &str) {
@@ -377,30 +379,25 @@ impl AppState {
 }
 
 fn station_page(station_x: i64) -> Vec<String> {
-    let label = if station_x == station_positions()[0] {
-        "spawn"
-    } else {
-        "opposite"
-    };
-    vec![
+    let label = station_label_for_x(station_x).unwrap_or("unknown");
+    let stations = station_positions();
+    let mut destination_lines = Vec::new();
+    for (index, station) in stations.iter().enumerate() {
+        let dest_label = station_label_for_x(*station).unwrap_or("unknown");
+        destination_lines.push(format!("{}) {dest_label}", index + 1));
+    }
+    let mut lines = vec![
         format!("station: {label}"),
         "destinations:".to_string(),
-        "1) spawn".to_string(),
-        "2) opposite".to_string(),
-        "press 1/2 or /board <spawn|opposite>".to_string(),
-    ]
+    ];
+    lines.append(&mut destination_lines);
+    lines.push("press 1-4 or /board <north|east|south|west>".to_string());
+    lines
 }
 
 fn train_page(train_id: u32, destination: Option<i64>) -> Vec<String> {
-    let dest_label = destination.map(|value| {
-        if value == station_positions()[0] {
-            "spawn".to_string()
-        } else if value == station_positions()[1] {
-            "opposite".to_string()
-        } else {
-            value.to_string()
-        }
-    });
+    let dest_label = destination.and_then(station_label_for_x).map(|value| value.to_string());
+    let dest_label = dest_label.or_else(|| destination.map(|value| value.to_string()));
     let dest_line = match dest_label {
         Some(label) => format!("destination: {label}"),
         None => "destination: (unset)".to_string(),
@@ -408,7 +405,7 @@ fn train_page(train_id: u32, destination: Option<i64>) -> Vec<String> {
     vec![
         format!("train: {train_id}"),
         dest_line,
-        "press 1/2 or /depart <spawn|opposite>".to_string(),
+        "press 1-4 or /depart <north|east|south|west>".to_string(),
     ]
 }
 
@@ -631,6 +628,12 @@ fn handle_input_event(
                 KeyCode::Char('2') if key.kind == KeyEventKind::Press => {
                     let _ = handle_quick_station_action(app, outgoing, signing_key, 2)?;
                 }
+                KeyCode::Char('3') if key.kind == KeyEventKind::Press => {
+                    let _ = handle_quick_station_action(app, outgoing, signing_key, 3)?;
+                }
+                KeyCode::Char('4') if key.kind == KeyEventKind::Press => {
+                    let _ = handle_quick_station_action(app, outgoing, signing_key, 4)?;
+                }
                 KeyCode::Char('/') if key.kind == KeyEventKind::Press => {
                     app.input_mode = true;
                     app.input.clear();
@@ -669,6 +672,11 @@ fn handle_command_input(
     }
     let name = parts[0].clone();
     let args = parts[1..].to_vec();
+    let requires_customizer = matches!(name.as_str(), "room_name" | "door_color" | "access");
+    if requires_customizer && !app.room_customizer_adjacent() {
+        app.push_chat("error: must be adjacent to room settings C".to_string());
+        return Ok(false);
+    }
     if name == "whisper" {
         let text = args.join(" ");
         let payload = ClientChat {
@@ -765,17 +773,13 @@ fn handle_quick_station_action(
     choice: usize,
 ) -> anyhow::Result<bool> {
     let stations = station_positions();
-    let destination = match choice {
-        1 => Some(stations[0]),
-        2 => Some(stations[1]),
-        _ => None,
-    };
+    let destination = choice.checked_sub(1).and_then(|index| stations.get(index)).copied();
     let Some(destination) = destination else {
         return Ok(false);
     };
     if parse_station_map_id(&app.map_id).is_some() {
         app.desired_destination = Some(destination);
-        let label = if destination == stations[0] { "spawn" } else { "opposite" };
+        let label = station_label_for_x(destination).unwrap_or("unknown");
         let payload = ClientCommand {
             name: "board".to_string(),
             args: vec![label.to_string()],
@@ -785,7 +789,7 @@ fn handle_quick_station_action(
     }
     if parse_train_map_id(&app.map_id).is_some() {
         app.desired_destination = Some(destination);
-        let label = if destination == stations[0] { "spawn" } else { "opposite" };
+        let label = station_label_for_x(destination).unwrap_or("unknown");
         let payload = ClientCommand {
             name: "depart".to_string(),
             args: vec![label.to_string()],
@@ -797,13 +801,11 @@ fn handle_quick_station_action(
 }
 
 fn parse_destination_arg(args: &[String]) -> Option<i64> {
-    let stations = station_positions();
     let arg = args.get(0)?.as_str();
-    match arg {
-        "spawn" => Some(stations[0]),
-        "opposite" => Some(stations[1]),
-        _ => arg.parse::<i64>().ok(),
+    if let Some(value) = station_x_for_label(arg) {
+        return Some(value);
     }
+    arg.parse::<i64>().ok()
 }
 
 fn now_ms() -> i64 {

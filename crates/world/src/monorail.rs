@@ -1,10 +1,34 @@
 use crate::map::{STREET_CIRCUMFERENCE_TILES, STREET_HEIGHT};
 
 pub const TRACK_ROWS: [i32; 2] = [STREET_HEIGHT / 2 - 1, STREET_HEIGHT / 2];
-pub const STATION_DOOR_Y: i32 = TRACK_ROWS[0] - 1;
+pub const STATION_DOOR_Y_TOP: i32 = TRACK_ROWS[0] - 1;
+pub const STATION_DOOR_Y_BOTTOM: i32 = TRACK_ROWS[1] + 1;
 
-pub fn station_positions() -> [i64; 2] {
-    [0, STREET_CIRCUMFERENCE_TILES / 2]
+pub const STATION_LABELS: [&str; 4] = ["north", "east", "south", "west"];
+
+pub fn station_positions() -> [i64; 4] {
+    let quarter = STREET_CIRCUMFERENCE_TILES / 4;
+    [0, quarter, quarter * 2, quarter * 3]
+}
+
+pub fn station_label_for_x(station_x: i64) -> Option<&'static str> {
+    let positions = station_positions();
+    for (idx, pos) in positions.iter().enumerate() {
+        if *pos == station_x {
+            return Some(STATION_LABELS[idx]);
+        }
+    }
+    None
+}
+
+pub fn station_x_for_label(label: &str) -> Option<i64> {
+    let positions = station_positions();
+    for (idx, pos) in positions.iter().enumerate() {
+        if label.eq_ignore_ascii_case(STATION_LABELS[idx]) {
+            return Some(*pos);
+        }
+    }
+    None
 }
 
 pub fn is_track_row(y: i32) -> bool {
@@ -15,27 +39,20 @@ pub fn is_station_x(x: i32) -> bool {
     let positions = station_positions();
     let circumference = STREET_CIRCUMFERENCE_TILES;
     let wrapped = (x as i64).rem_euclid(circumference);
-    wrapped == positions[0] || wrapped == positions[1]
+    positions.iter().any(|pos| *pos == wrapped)
 }
 
 pub fn station_x_for_coord(x: i32) -> Option<i64> {
     if !is_station_x(x) {
         return None;
     }
-    let positions = station_positions();
     let circumference = STREET_CIRCUMFERENCE_TILES;
     let wrapped = (x as i64).rem_euclid(circumference);
-    if wrapped == positions[0] {
-        Some(positions[0])
-    } else if wrapped == positions[1] {
-        Some(positions[1])
-    } else {
-        None
-    }
+    Some(wrapped)
 }
 
 pub fn is_station_door(x: i32, y: i32) -> bool {
-    y == STATION_DOOR_Y && is_station_x(x)
+    (y == STATION_DOOR_Y_TOP || y == STATION_DOOR_Y_BOTTOM) && is_station_x(x)
 }
 
 pub fn station_map_id(station_x: i64) -> String {

@@ -18,8 +18,8 @@
 
 ### Monorail
 - Two-row track runs through the center of the Street.
-- Four trains circle the ring continuously at high speed.
-- Stations at x=0 (spawn) and x=circumference/2 (opposite).
+- Eight trains circle the ring continuously at high speed (4 clockwise, 4 counterclockwise).
+- Stations at x=0 (north), x=circumference/4 (east), x=circumference/2 (south), x=3*circumference/4 (west).
 - Station entrance doors are marked with `M` on the Street.
 - Boarding happens when a train arrives; trains do not stop.
 
@@ -63,8 +63,8 @@
 - `/pay <user> <amount>`: send XMR (placeholder integration).
 - `/balance`: show balance (placeholder integration).
 - `/faucet [amount]`: dev credit (placeholder).
-- `/board <spawn|opposite>`: board monorail from station.
-- `/depart <spawn|opposite>`: set monorail destination.
+- `/board <north|east|south|west>`: board monorail from station.
+- `/depart <north|east|south|west>`: set monorail destination.
 - `/room_name <name>`: set room name (owner only).
 - `/door_color <color>`: set room door color (owner only).
 - `/claim_name <name>`: purchase a unique display name.

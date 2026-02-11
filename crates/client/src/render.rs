@@ -8,7 +8,7 @@ use ratatui::{
     Frame,
 };
 
-use street_world::monorail::is_track_row;
+use street_world::monorail::{is_track_row, TRACK_ROWS};
 use street_world::{
     parse_room_map_id, parse_station_map_id, parse_train_map_id, room_id_for_door, room_tile,
     station_tile, street_door_side, street_tile, train_tile, RoomSide, Tile, ROOM_HEIGHT,
@@ -128,9 +128,14 @@ fn render_street(app: &AppState, area: Rect) -> Text<'static> {
         .fg(Color::LightBlue)
         .add_modifier(Modifier::BOLD);
     let floor_style = Style::default().fg(Color::Gray);
-    let track_style = Style::default().fg(Color::DarkGray);
-    let train_style = Style::default()
-        .fg(Color::LightRed)
+    let track_style = Style::default()
+        .fg(Color::LightGreen)
+        .add_modifier(Modifier::BOLD);
+    let train_clockwise_style = Style::default()
+        .fg(Color::Magenta)
+        .add_modifier(Modifier::BOLD);
+    let train_counter_style = Style::default()
+        .fg(Color::LightCyan)
         .add_modifier(Modifier::BOLD);
     let player_style = Style::default()
         .fg(Color::Cyan)
@@ -140,13 +145,21 @@ fn render_street(app: &AppState, area: Rect) -> Text<'static> {
         .add_modifier(Modifier::BOLD);
 
     let circumference = STREET_CIRCUMFERENCE_TILES as i64;
-    let mut train_positions: HashSet<i64> = HashSet::new();
+    let mut train_positions_top: HashSet<i64> = HashSet::new();
+    let mut train_positions_bottom: HashSet<i64> = HashSet::new();
     for train in &app.trains {
         let head = adjust_train_x(train.x, player_x, circumference);
-        for offset in 0..32 {
-            train_positions.insert(head - offset);
+        let positions = if train.clockwise {
+            &mut train_positions_bottom
+        } else {
+            &mut train_positions_top
+        };
+        for offset in 0..TRAIN_WIDTH {
+            positions.insert(head - offset as i64);
         }
     }
+    let top_track_row = TRACK_ROWS[0];
+    let bottom_track_row = TRACK_ROWS[1];
 
     let mut lines = Vec::new();
     for y in 0..STREET_HEIGHT {
@@ -157,8 +170,10 @@ fn render_street(app: &AppState, area: Rect) -> Text<'static> {
                 ("@", player_style)
             } else if app.nearby_positions.contains(&(x, y)) {
                 ("o", other_style)
-            } else if is_track_row(y) && train_positions.contains(&(x as i64)) {
-                ("T", train_style)
+            } else if y == top_track_row && train_positions_top.contains(&(x as i64)) {
+                ("T", train_counter_style)
+            } else if y == bottom_track_row && train_positions_bottom.contains(&(x as i64)) {
+                ("T", train_clockwise_style)
             } else {
                 match street_tile(x, y) {
                     Tile::Wall => ("#", wall_style),
@@ -169,9 +184,7 @@ fn render_street(app: &AppState, area: Rect) -> Text<'static> {
                     Tile::StationDoor => ("M", station_style),
                     Tile::Customizer => (
                         "C",
-                        Style::default()
-                            .fg(Color::Green)
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                     ),
                     Tile::Floor => {
                         if is_track_row(y) {
@@ -235,9 +248,7 @@ fn render_station(app: &AppState, area: Rect) -> Text<'static> {
                     Tile::Door => ("D", door_style),
                     Tile::Customizer => (
                         "C",
-                        Style::default()
-                            .fg(Color::Green)
-                            .add_modifier(Modifier::BOLD),
+                        Style::default().fg(Color::Red).add_modifier(Modifier::BOLD),
                     ),
                     _ => (".", floor_style),
                 }
@@ -323,9 +334,7 @@ fn render_room(app: &AppState, area: Rect, side: RoomSide) -> Text<'static> {
         .fg(Color::Yellow)
         .add_modifier(Modifier::BOLD);
     let floor_style = Style::default().fg(Color::Gray);
-    let customizer_style = Style::default()
-        .fg(Color::Green)
-        .add_modifier(Modifier::BOLD);
+    let customizer_style = Style::default().fg(Color::Red).add_modifier(Modifier::BOLD);
     let player_style = Style::default()
         .fg(Color::Cyan)
         .add_modifier(Modifier::BOLD);

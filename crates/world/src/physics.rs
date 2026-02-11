@@ -5,12 +5,13 @@ use crate::doors::{
     street_entry_position, RoomSide,
 };
 use crate::map::{
-    room_tile, station_entry_position, station_tile, street_tile, train_tile, Position, Tile,
-    ROOM_HEIGHT, ROOM_WIDTH, STATION_HEIGHT, STATION_WIDTH, STREET_HEIGHT, TRAIN_HEIGHT,
-    TRAIN_WIDTH,
+    room_tile, station_entry_position_for_street_y, station_tile, street_tile, train_tile,
+    Position, Tile, ROOM_HEIGHT, ROOM_WIDTH, STATION_HEIGHT, STATION_WIDTH, STREET_HEIGHT,
+    TRAIN_HEIGHT, TRAIN_WIDTH,
 };
 use crate::monorail::{
     parse_station_map_id, parse_train_map_id, station_map_id, station_x_for_coord,
+    STATION_DOOR_Y_BOTTOM, STATION_DOOR_Y_TOP,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -79,7 +80,7 @@ fn move_on_street(position: &Position, dir: Direction) -> MoveOutcome {
                 None => return MoveOutcome::Blocked,
             };
             let map_id = station_map_id(station_x);
-            let (sx, sy) = station_entry_position();
+            let (sx, sy) = station_entry_position_for_street_y(ny);
             MoveOutcome::Transition(Position {
                 map_id,
                 x: sx,
@@ -124,11 +125,18 @@ fn move_in_station(position: &Position, dir: Direction, station_x: i64) -> MoveO
     }
     match station_tile(nx, ny) {
         Tile::Wall | Tile::Customizer => MoveOutcome::Blocked,
-        Tile::Door => MoveOutcome::Transition(Position {
-            map_id: "street".to_string(),
-            x: station_x as i32,
-            y: crate::monorail::STATION_DOOR_Y,
-        }),
+        Tile::Door => {
+            let street_y = if ny == 0 {
+                STATION_DOOR_Y_TOP
+            } else {
+                STATION_DOOR_Y_BOTTOM
+            };
+            MoveOutcome::Transition(Position {
+                map_id: "street".to_string(),
+                x: station_x as i32,
+                y: street_y,
+            })
+        }
         Tile::Floor | Tile::StationDoor => MoveOutcome::Moved(Position {
             map_id: position.map_id.clone(),
             x: nx,

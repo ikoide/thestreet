@@ -121,7 +121,7 @@ All messages use a common envelope:
 - Payload: `{ "users": [{"id": "u_123", "display_name": "...", "x": 0, "y": 0}] }`
 
 ### server.train_state
-- Payload: `{ "trains": [{"id": 0, "x": 1234.5}] }`
+- Payload: `{ "trains": [{"id": 0, "x": 1234.5, "clockwise": true}] }`
 
 ### server.who
 - Payload: `{ "users": [{"id": "u_123", "display_name": "..."}] }`

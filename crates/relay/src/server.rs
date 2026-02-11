@@ -25,7 +25,10 @@ use street_world::{
     parse_room_id, parse_room_map_id, room_customizer_position, room_id_for_door, try_move,
     Direction, MoveOutcome, STREET_CIRCUMFERENCE_TILES, TRAIN_HEIGHT, TRAIN_WIDTH,
 };
-use street_world::monorail::{parse_station_map_id, parse_train_map_id, station_positions, train_map_id};
+use street_world::monorail::{
+    parse_station_map_id, parse_train_map_id, station_positions, station_x_for_label, train_map_id,
+    STATION_DOOR_Y_BOTTOM, STATION_DOOR_Y_TOP,
+};
 
 use crate::state::{
     BoardingRequest, ClientHandle, RoomState, ServerState as RelayState, TrainRide, TrainState,
@@ -909,8 +912,8 @@ fn handle_help(tx: &mpsc::UnboundedSender<Message>) -> anyhow::Result<()> {
         "/pay <user> <amount> - send XMR (mock)",
         "/balance - show balance (mock)",
         "/faucet [amount] - dev credit (mock)",
-        "/board <spawn|opposite> - board train from station",
-        "/depart <spawn|opposite> - set train destination",
+        "/board <north|east|south|west> - board train from station",
+        "/depart <north|east|south|west> - set train destination",
         "/room_name <name> - set room name",
         "/door_color <color> - set door color",
         "/claim_name <name> - purchase unique name",
@@ -1057,7 +1060,7 @@ async fn handle_board(
     let destination = match parse_station_arg(&args) {
         Some(value) => value,
         None => {
-            send_error(tx, "invalid_command", "usage: /board <spawn|opposite>")?;
+            send_error(tx, "invalid_command", "usage: /board <north|east|south|west>")?;
             return Ok(());
         }
     };
@@ -1094,7 +1097,7 @@ async fn handle_depart(
     let destination = match parse_station_arg(&args) {
         Some(value) => value,
         None => {
-            send_error(tx, "invalid_command", "usage: /depart <spawn|opposite>")?;
+            send_error(tx, "invalid_command", "usage: /depart <north|east|south|west>")?;
             return Ok(());
         }
     };
@@ -1111,17 +1114,14 @@ async fn handle_depart(
 fn parse_station_arg(args: &[String]) -> Option<i64> {
     let stations = station_positions();
     let arg = args.get(0)?.as_str();
-    match arg {
-        "spawn" => Some(stations[0]),
-        "opposite" => Some(stations[1]),
-        _ => {
-            let value = arg.parse::<i64>().ok()?;
-            if value == stations[0] || value == stations[1] {
-                Some(value)
-            } else {
-                None
-            }
-        }
+    if let Some(value) = station_x_for_label(arg) {
+        return Some(value);
+    }
+    let value = arg.parse::<i64>().ok()?;
+    if stations.iter().any(|station| *station == value) {
+        Some(value)
+    } else {
+        None
     }
 }
 
@@ -1266,6 +1266,7 @@ fn send_train_state(
             .map(|train| TrainInfo {
                 id: train.id,
                 x: train.x,
+                clockwise: train.clockwise,
             })
             .collect(),
     };
@@ -1327,8 +1328,9 @@ fn spawn_train_loop(state: Arc<RwLock<RelayState>>) {
             let mut updates = Vec::new();
             for train in &mut state_guard.trains {
                 let prev = train.x;
-                train.x = (train.x + train.speed * dt).rem_euclid(circumference);
-                updates.push((train.id, prev, train.x));
+                let direction = if train.clockwise { 1.0 } else { -1.0 };
+                train.x = (train.x + train.speed * direction * dt).rem_euclid(circumference);
+                updates.push((train.id, prev, train.x, train.clockwise));
             }
 
             handle_boarding(&mut state_guard, &updates).ok();
@@ -1343,6 +1345,7 @@ fn spawn_train_loop(state: Arc<RwLock<RelayState>>) {
                         .map(|train| TrainInfo {
                             id: train.id,
                             x: train.x,
+                            clockwise: train.clockwise,
                         })
                         .collect(),
                 };
@@ -1360,7 +1363,7 @@ fn spawn_train_loop(state: Arc<RwLock<RelayState>>) {
 
 fn handle_boarding(
     state: &mut RelayState,
-    updates: &[(u32, f64, f64)],
+    updates: &[(u32, f64, f64, bool)],
 ) -> anyhow::Result<()> {
     let entries = state
         .boarding
@@ -1387,8 +1390,8 @@ fn handle_boarding(
             to_remove.push(user_id);
             continue;
         }
-        for (train_id, prev, next) in updates {
-            if station_passed(*prev, *next, station, STREET_CIRCUMFERENCE_TILES as f64) {
+        for (train_id, prev, next, clockwise) in updates {
+            if station_passed(*prev, *next, station, STREET_CIRCUMFERENCE_TILES as f64, *clockwise) {
                 let mut from_map = None;
                 let mut to_map = None;
                 let mut to_pos = None;
@@ -1447,7 +1450,7 @@ fn handle_boarding(
     Ok(())
 }
 
-fn handle_riders(state: &mut RelayState, updates: &[(u32, f64, f64)]) -> anyhow::Result<()> {
+fn handle_riders(state: &mut RelayState, updates: &[(u32, f64, f64, bool)]) -> anyhow::Result<()> {
     let entries = state
         .riders
         .iter()
@@ -1455,7 +1458,7 @@ fn handle_riders(state: &mut RelayState, updates: &[(u32, f64, f64)]) -> anyhow:
         .collect::<Vec<_>>();
     let mut to_remove = Vec::new();
     for (user_id, ride) in entries {
-        let Some((_, prev, next)) = updates.iter().find(|(id, _, _)| *id == ride.train_id) else {
+        let Some((_, prev, next, clockwise)) = updates.iter().find(|(id, _, _, _)| *id == ride.train_id) else {
             continue;
         };
         let valid_train = match state.users.get(&user_id) {
@@ -1467,14 +1470,19 @@ fn handle_riders(state: &mut RelayState, updates: &[(u32, f64, f64)]) -> anyhow:
             continue;
         }
         let dest = ride.destination_x as f64;
-        if station_passed(*prev, *next, dest, STREET_CIRCUMFERENCE_TILES as f64) {
+        if station_passed(*prev, *next, dest, STREET_CIRCUMFERENCE_TILES as f64, *clockwise) {
             let mut from_map = None;
             let mut to_map = None;
             let mut to_pos = None;
             let (prev_map, next_map, next_pos) = if let Some(user) = state.users.get_mut(&user_id) {
                 let previous_map = user.position.map_id.clone();
                 let station_map = street_world::monorail::station_map_id(ride.destination_x);
-                let (sx, sy) = street_world::station_entry_position();
+                let street_y = if *clockwise {
+                    STATION_DOOR_Y_BOTTOM
+                } else {
+                    STATION_DOOR_Y_TOP
+                };
+                let (sx, sy) = street_world::station_entry_position_for_street_y(street_y);
                 user.position.map_id = station_map.clone();
                 user.position.x = sx;
                 user.position.y = sy;
@@ -1515,13 +1523,21 @@ fn handle_riders(state: &mut RelayState, updates: &[(u32, f64, f64)]) -> anyhow:
     Ok(())
 }
 
-fn station_passed(prev: f64, next: f64, station: f64, _circumference: f64) -> bool {
+fn station_passed(prev: f64, next: f64, station: f64, _circumference: f64, clockwise: bool) -> bool {
     if (prev - next).abs() < f64::EPSILON {
         return false;
     }
-    if prev <= next {
-        station >= prev && station <= next
+    if clockwise {
+        if prev <= next {
+            station >= prev && station <= next
+        } else {
+            station >= prev || station <= next
+        }
     } else {
-        station >= prev || station <= next
+        if next <= prev {
+            station >= next && station <= prev
+        } else {
+            station >= next || station <= prev
+        }
     }
 }

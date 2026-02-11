@@ -160,6 +160,7 @@ pub struct ServerTrainState {
 pub struct TrainInfo {
     pub id: u32,
     pub x: f64,
+    pub clockwise: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

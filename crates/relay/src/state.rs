@@ -38,6 +38,7 @@ pub struct TrainState {
     pub id: u32,
     pub x: f64,
     pub speed: f64,
+    pub clockwise: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -161,6 +162,16 @@ fn init_trains() -> Vec<TrainState> {
             id,
             x: spacing * id as f64,
             speed,
+            clockwise: true,
+        });
+    }
+    let offset = spacing / 2.0;
+    for id in 0..4u32 {
+        trains.push(TrainState {
+            id: id + 4,
+            x: (spacing * id as f64 + offset).rem_euclid(circumference),
+            speed,
+            clockwise: false,
         });
     }
     trains
