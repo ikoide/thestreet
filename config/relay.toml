@@ -1,0 +1,9 @@
+bind_addr = "0.0.0.0:9001"
+data_dir = "data"
+room_price_xmr = "1.0"
+username_fee_xmr = "0.1"
+dev_wallet_pubkey = "DEV_WALLET_PLACEHOLDER"
+
+[dev_fee]
+mode = "bps"
+value = 100

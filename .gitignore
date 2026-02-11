@@ -1,4 +1,23 @@
-venv/
-client_debug.log
-*.pyc
-__pycache__/
+# Rust build output
+/target/
+/dist/
+
+# Runtime data
+/data/*.json
+
+# Secret keys and env files
+/config/*.key
+*.key
+*.pem
+*.p12
+*.pfx
+.env
+.env.*
+
+# Logs
+*.log
+
+# Editor/OS
+.DS_Store
+.idea/
+.vscode/

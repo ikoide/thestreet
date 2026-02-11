@@ -1,0 +1,5 @@
+relay_url = "ws://172.29.78.253:9001"
+tor_enabled = false
+socks5_proxy = "127.0.0.1:9050"
+remote_node_url = ""
+identity_key_path = "config/identity2.key"
