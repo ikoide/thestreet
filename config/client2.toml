@@ -1,4 +1,4 @@
-relay_url = "ws://127.0.0.1:9001"
+relay_url = "ws://89.125.209.155:9001"
 tor_enabled = false
 socks5_proxy = "127.0.0.1:9050"
 remote_node_url = ""

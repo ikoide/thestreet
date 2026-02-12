@@ -21,14 +21,27 @@ mod crypto;
 #[derive(Parser, Debug)]
 #[command(name = "street-client")]
 struct Args {
-    #[arg(long, default_value = "config/client.toml")]
-    config: String,
+    #[arg(long)]
+    config: Option<String>,
 }
+
+const DEFAULT_CONFIG_PATH: &str = "config/client.toml";
+const DEFAULT_IDENTITY_KEY_PATH: &str = "config/identity.key";
+const DEFAULT_RELAY_URL: &str = "ws://89.125.209.155:9001";
+const DEFAULT_SOCKS5_PROXY: &str = "127.0.0.1:9050";
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     let args = Args::parse();
-    let config: ClientConfig = load_config(&args.config)?;
+    let config_path = args
+        .config
+        .clone()
+        .unwrap_or_else(|| DEFAULT_CONFIG_PATH.to_string());
+    let config = if args.config.is_some() {
+        load_config(&config_path)?
+    } else {
+        load_or_create_config(&config_path)?
+    };
     let signing_key = load_or_create_key(&config.identity_key_path)?;
 
     let x_identity = identity_from_signing_key(&signing_key);
@@ -50,6 +63,32 @@ async fn main() -> anyhow::Result<()> {
         input_rx,
     )
     .await
+}
+
+fn load_or_create_config(path: &str) -> anyhow::Result<ClientConfig> {
+    if Path::new(path).exists() {
+        return load_config(path);
+    }
+    if let Some(parent) = Path::new(path).parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let config = ClientConfig {
+        relay_url: DEFAULT_RELAY_URL.to_string(),
+        tor_enabled: false,
+        socks5_proxy: Some(DEFAULT_SOCKS5_PROXY.to_string()),
+        remote_node_url: Some(String::new()),
+        identity_key_path: DEFAULT_IDENTITY_KEY_PATH.to_string(),
+    };
+    let content = format!(
+        "relay_url = \"{}\"\n\
+tor_enabled = false\n\
+socks5_proxy = \"{}\"\n\
+remote_node_url = \"\"\n\
+identity_key_path = \"{}\"\n",
+        config.relay_url, config.socks5_proxy.as_deref().unwrap_or(""), config.identity_key_path
+    );
+    fs::write(path, content)?;
+    Ok(config)
 }
 
 fn load_or_create_key(path: &str) -> anyhow::Result<ed25519_dalek::SigningKey> {

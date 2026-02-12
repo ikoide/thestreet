@@ -45,6 +45,8 @@ cargo run -p street-client -- --config config/client2.toml
 - Client config: `config/client.toml`
 - Client identity key: `config/identity.key` (auto-generated on first run)
 
+Running the client without `--config` will create `config/client.toml` and a new identity key using the default relay `ws://89.125.209.155:9001`.
+
 For multiple local clients, each needs a unique `identity_key_path`. Use `config/client2.toml` as a template.
 
 ## Controls
