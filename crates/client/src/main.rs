@@ -7,13 +7,16 @@ use tokio::sync::mpsc;
 use street_common::config::{load_config, ClientConfig};
 use street_common::crypto::{decode_signing_key, Keypair};
 
-use crate::net::connect;
+use crate::boot::boot_and_connect;
+use crate::crypto::identity_from_signing_key;
 use crate::ui::{run_ui, AppState};
 
 mod input;
 mod net;
 mod render;
 mod ui;
+mod boot;
+mod crypto;
 
 #[derive(Parser, Debug)]
 #[command(name = "street-client")]
@@ -28,8 +31,13 @@ async fn main() -> anyhow::Result<()> {
     let config: ClientConfig = load_config(&args.config)?;
     let signing_key = load_or_create_key(&config.identity_key_path)?;
 
-    let connection = connect(&config, &signing_key).await?;
-    let app_state = AppState::from_welcome(&connection.welcome);
+    let x_identity = identity_from_signing_key(&signing_key);
+    let connection = boot_and_connect(&config, &signing_key, &x_identity.public_b64).await?;
+    let app_state = AppState::from_welcome(
+        &connection.welcome,
+        x_identity.secret.to_bytes(),
+        x_identity.public_b64,
+    );
 
     let (input_tx, input_rx) = mpsc::unbounded_channel();
     input::spawn_input_reader(input_tx);

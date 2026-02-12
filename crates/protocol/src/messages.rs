@@ -40,6 +40,8 @@ pub struct ClientAuth {
     pub pubkey: String,
     pub challenge_sig: String,
     pub client_version: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub x25519_pubkey: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -59,6 +61,10 @@ pub struct ClientMove {
 pub struct ClientChat {
     pub scope: Option<ChatScope>,
     pub text: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub target: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enc: Option<EncryptedPayload>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -96,6 +102,10 @@ pub struct ServerChat {
     pub display_name: Option<String>,
     pub text: String,
     pub scope: ChatScope,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub room_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub enc: Option<EncryptedPayload>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -109,6 +119,8 @@ pub struct NearbyUser {
     pub display_name: Option<String>,
     pub x: i32,
     pub y: i32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub x25519_pubkey: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -166,6 +178,33 @@ pub struct TrainInfo {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ServerHeartbeat {
     pub nonce: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EncryptedPayload {
+    pub alg: String,
+    pub nonce: String,
+    pub ciphertext: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sender_key: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ClientRoomKey {
+    pub room_id: String,
+    pub target: String,
+    pub sender_key: String,
+    pub nonce: String,
+    pub ciphertext: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ServerRoomKey {
+    pub room_id: String,
+    pub from: String,
+    pub sender_key: String,
+    pub nonce: String,
+    pub ciphertext: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -1,4 +1,4 @@
-bind_addr = "0.0.0.0:9001"
+bind_addr = "127.0.0.1:9001"
 data_dir = "data"
 room_price_xmr = "1.0"
 username_fee_xmr = "0.1"

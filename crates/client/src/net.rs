@@ -2,6 +2,7 @@ use futures_util::{SinkExt, StreamExt};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::net::TcpStream;
 use tokio::sync::mpsc;
+use tokio::time::{timeout, Duration};
 use tokio_tungstenite::client_async;
 use tokio_tungstenite::WebSocketStream;
 use url::Url;
@@ -28,7 +29,10 @@ impl<T: AsyncRead + AsyncWrite + Unpin + Send> AsyncStream for T {}
 pub async fn connect(
     config: &street_common::config::ClientConfig,
     signing_key: &ed25519_dalek::SigningKey,
+    x25519_pubkey: &str,
 ) -> anyhow::Result<Connection> {
+    const CONNECT_TIMEOUT_SECS: u64 = 10;
+
     let url = Url::parse(&config.relay_url)?;
     let host = url.host_str().ok_or_else(|| anyhow::anyhow!("invalid relay_url"))?;
     let port = url.port_or_known_default().ok_or_else(|| anyhow::anyhow!("invalid relay_url"))?;
@@ -39,20 +43,35 @@ pub async fn connect(
             .socks5_proxy
             .as_ref()
             .ok_or_else(|| anyhow::anyhow!("socks5_proxy required when tor_enabled"))?;
-        let socks = tokio_socks::tcp::Socks5Stream::connect(proxy.as_str(), addr).await?;
+        let socks = timeout(
+            Duration::from_secs(CONNECT_TIMEOUT_SECS),
+            tokio_socks::tcp::Socks5Stream::connect(proxy.as_str(), addr),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("connect timeout ({CONNECT_TIMEOUT_SECS}s)"))??;
         Box::new(socks)
     } else {
-        let tcp = TcpStream::connect(addr).await?;
+        let tcp = timeout(
+            Duration::from_secs(CONNECT_TIMEOUT_SECS),
+            TcpStream::connect(addr),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("connect timeout ({CONNECT_TIMEOUT_SECS}s)"))??;
         Box::new(tcp)
     };
 
-    let (ws_stream, _) = client_async(config.relay_url.clone(), stream).await?;
+    let (ws_stream, _) = timeout(
+        Duration::from_secs(CONNECT_TIMEOUT_SECS),
+        client_async(config.relay_url.clone(), stream),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("websocket handshake timeout ({CONNECT_TIMEOUT_SECS}s)"))??;
     let ws_stream: WebSocketStream<Box<dyn AsyncStream>> = ws_stream;
     let (mut ws_write, mut ws_read) = ws_stream.split();
 
-    let hello_env = ws_read
-        .next()
+    let hello_env = timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS), ws_read.next())
         .await
+        .map_err(|_| anyhow::anyhow!("timeout waiting for server.hello"))?
         .ok_or_else(|| anyhow::anyhow!("no server hello"))??;
     let hello_env: Envelope = serde_json::from_str(hello_env.to_text()?)?;
     if hello_env.message_type != "server.hello" {
@@ -66,6 +85,7 @@ pub async fn connect(
         pubkey: keypair.verifying_key_base64(),
         challenge_sig,
         client_version: "0.1".to_string(),
+        x25519_pubkey: Some(x25519_pubkey.to_string()),
     };
     let auth_env = unsigned_envelope("client.auth", &new_message_id(), now_ms(), &auth)?;
     ws_write
@@ -74,15 +94,16 @@ pub async fn connect(
         ))
         .await?;
 
-    let welcome_env = ws_read
-        .next()
+    let welcome_env = timeout(Duration::from_secs(CONNECT_TIMEOUT_SECS), ws_read.next())
         .await
+        .map_err(|_| anyhow::anyhow!("timeout waiting for server.welcome"))?
         .ok_or_else(|| anyhow::anyhow!("no server welcome"))??;
     let welcome_env: Envelope = serde_json::from_str(welcome_env.to_text()?)?;
     if welcome_env.message_type != "server.welcome" {
         anyhow::bail!("expected server.welcome")
     }
     let welcome: ServerWelcome = serde_json::from_value(welcome_env.payload)?;
+
 
     let (out_tx, mut out_rx) = mpsc::unbounded_channel::<OutgoingMessage>();
     let (in_tx, in_rx) = mpsc::unbounded_channel::<Envelope>();

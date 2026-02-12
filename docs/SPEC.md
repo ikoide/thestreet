@@ -45,10 +45,10 @@
 ## Chat + Messaging
 ### Local chat
 - Use `/say <message>`.
-- Street proximity: 8x8 grid centered on speaker (Chebyshev distance).
+- Street proximity: 16x16 grid centered on speaker (Chebyshev distance).
 
 ### Whisper
-- `/whisper <message>` sends to a 3x3 grid centered on speaker.
+- `/whisper <user> <message>` sends to a target within a 5x5 grid centered on speaker.
 
 ### Room chat
 - Visible to everyone in the same room.
@@ -56,9 +56,9 @@
 ## Commands (MVP)
 - `/say <message>`: local chat.
 - `/who`:
-  - Street: users within 8x8 grid.
+  - Street: users within 16x16 grid.
   - Room: all users in the room.
-- `/whisper <message>`: 3x3 grid centered on speaker.
+- `/whisper <user> <message>`: target within a 5x5 grid centered on speaker.
 - `/buy`: purchase current room/parcel.
 - `/pay <user> <amount>`: send XMR (placeholder integration).
 - `/balance`: show balance (placeholder integration).
@@ -103,6 +103,7 @@
 - Signed client messages using client keypair.
 - Server rate-limits to prevent chat spam.
 - Server never stores client private keys.
+- E2E encryption for room chat and whispers (street chat remains plaintext).
 - XMR integration isolated behind a wallet interface to allow real integration later.
 
 ## Supporting Docs

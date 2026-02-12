@@ -23,6 +23,9 @@ jobs:
           - os: macos-14
             target: aarch64-apple-darwin
             artifact: street-client-macos-arm64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
+            artifact: street-client-windows-x86_64
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -33,15 +36,30 @@ jobs:
       - name: Build
         run: cargo build -p street-client --release --target ${{ matrix.target }}
       - name: Package
+        shell: bash
         run: |
           mkdir -p dist
-          cp "target/${{ matrix.target }}/release/street-client" "dist/${{ matrix.artifact }}"
-          tar -czf "dist/${{ matrix.artifact }}.tar.gz" -C dist "${{ matrix.artifact }}"
+          bin_name="street-client"
+          out_name="${{ matrix.artifact }}"
+          archive_ext="tar.gz"
+          if [[ "${{ matrix.os }}" == "windows-latest" ]]; then
+            bin_name="${bin_name}.exe"
+            out_name="${out_name}.exe"
+            archive_ext="zip"
+          fi
+          archive_name="${{ matrix.artifact }}.${archive_ext}"
+          cp "target/${{ matrix.target }}/release/${bin_name}" "dist/${out_name}"
+          if [[ "${archive_ext}" == "zip" ]]; then
+            pwsh -NoProfile -Command "Compress-Archive -Path \"dist/${out_name}\" -DestinationPath \"dist/${archive_name}\""
+          else
+            tar -czf "dist/${archive_name}" -C dist "${out_name}"
+          fi
+          echo "ARCHIVE_NAME=${archive_name}" >> "$GITHUB_ENV"
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.artifact }}
-          path: dist/${{ matrix.artifact }}.tar.gz
+          path: dist/${{ env.ARCHIVE_NAME }}
           if-no-files-found: error
 
   release:
@@ -62,5 +80,7 @@ jobs:
         with:
           tag_name: main-latest
           name: Main build
-          files: dist/*.tar.gz
+          files: |
+            dist/*.tar.gz
+            dist/*.zip
           fail_on_unmatched_files: true

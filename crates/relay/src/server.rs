@@ -14,10 +14,10 @@ use street_common::ids::new_message_id;
 use street_protocol::signing::unsigned_envelope;
 use street_protocol::{
     AccessMode, AccessPolicy, ChatScope, ClientAuth, ClientChat, ClientCommand, ClientMove,
-    ClientRoomAccessUpdate, DevFeeConfig as WireDevFee, Direction as WireDirection, Envelope,
-    NearbyUser, ServerChat, ServerError, ServerHello, ServerMapChange, ServerNearby, ServerNotice,
-    ServerRoomInfo, ServerState, ServerTrainState, ServerTxUpdate, ServerWelcome, ServerWho,
-    TrainInfo, WhoUser,
+    ClientRoomAccessUpdate, ClientRoomKey, DevFeeConfig as WireDevFee, Direction as WireDirection,
+    Envelope, NearbyUser, ServerChat, ServerError, ServerHello, ServerMapChange, ServerNearby,
+    ServerNotice, ServerRoomInfo, ServerRoomKey, ServerState, ServerTrainState, ServerTxUpdate,
+    ServerWelcome, ServerWho, TrainInfo, WhoUser,
 };
 use street_wallet::mock::MockWallet;
 use street_wallet::Wallet;
@@ -36,10 +36,10 @@ use crate::state::{
 };
 use crate::storage::Storage;
 
-const LOCAL_CHAT_WIDTH: i32 = 8;
-const LOCAL_CHAT_HEIGHT: i32 = 8;
-const WHISPER_WIDTH: i32 = 3;
-const WHISPER_HEIGHT: i32 = 3;
+const LOCAL_CHAT_WIDTH: i32 = 16;
+const LOCAL_CHAT_HEIGHT: i32 = 16;
+const WHISPER_WIDTH: i32 = 5;
+const WHISPER_HEIGHT: i32 = 5;
 const MOVE_INTERVAL_MS: i64 = 60;
 const TRAIN_STATE_BROADCAST_TICKS: u32 = 2;
 
@@ -141,7 +141,7 @@ async fn handle_connection(
             }
 
             let mut state_guard = state.write().await;
-            let user = if let Some(user_id) = state_guard.users_by_pubkey.get(&auth.pubkey).cloned() {
+            let mut user = if let Some(user_id) = state_guard.users_by_pubkey.get(&auth.pubkey).cloned() {
                 state_guard.users.get(&user_id).cloned().unwrap_or_else(|| {
                     state_guard.create_user(auth.pubkey.clone())
                 })
@@ -150,6 +150,13 @@ async fn handle_connection(
                 wallet.credit(&auth.pubkey, 10.0);
                 user
             };
+
+            if let Some(x25519_pubkey) = &auth.x25519_pubkey {
+                user.x25519_pubkey = Some(x25519_pubkey.clone());
+                if let Some(entry) = state_guard.users.get_mut(&user.user_id) {
+                    entry.x25519_pubkey = Some(x25519_pubkey.clone());
+                }
+            }
 
             if state_guard.clients.contains_key(&user.user_id) {
                 drop(state_guard);
@@ -234,6 +241,13 @@ async fn handle_connection(
                     log_info(&format!("{label} room access update {}", payload.room_id));
                 }
                 handle_room_access(payload, user, &state, &storage, &config, &tx).await?;
+            }
+            "client.room_key" => {
+                let payload: ClientRoomKey = serde_json::from_value(env.payload)?;
+                if let Some(label) = &user_label {
+                    log_info(&format!("{label} room key {} -> {}", payload.room_id, payload.target));
+                }
+                handle_room_key(payload, user, &state, &tx).await?;
             }
             "client.heartbeat" => {
                 send_notice(&tx, "pong")?;
@@ -446,26 +460,91 @@ async fn handle_chat(
 ) -> anyhow::Result<()> {
     let scope = payload.scope.unwrap_or(ChatScope::Local);
     let text = payload.text;
+    let enc = payload.enc.clone();
+    let room_id = user.position.map_id.strip_prefix("room/").map(|value| value.to_string());
     let mut recipients = Vec::new();
 
     let state_guard = state.read().await;
     let users_in_map = connected_users_in_map(&state_guard, &user.position.map_id);
-    for other in users_in_map {
-        let allow = match scope {
-            ChatScope::Room => user.position.map_id != "street",
-            ChatScope::Local => {
-                if user.position.map_id == "street" {
-                    in_box(user.position.x, user.position.y, other.position.x, other.position.y, LOCAL_CHAT_WIDTH, LOCAL_CHAT_HEIGHT)
+    match scope {
+        ChatScope::Whisper => {
+            let Some(enc) = &enc else {
+                send_error(tx, "invalid_command", "whisper must be encrypted")?;
+                return Ok(());
+            };
+            if enc.sender_key.is_none() {
+                send_error(tx, "invalid_command", "missing whisper sender key")?;
+                return Ok(());
+            }
+            let Some(target) = payload.target.as_deref() else {
+                send_error(tx, "invalid_command", "usage: /whisper <user> <msg>")?;
+                return Ok(());
+            };
+            let target_user = users_in_map
+                .iter()
+                .find(|u| u.user_id == target || u.display_name.as_deref() == Some(target));
+            let target_user = match target_user {
+                Some(user) => user,
+                None => {
+                    send_error(tx, "invalid_command", "whisper target not found")?;
+                    return Ok(());
+                }
+            };
+            if !in_box(
+                user.position.x,
+                user.position.y,
+                target_user.position.x,
+                target_user.position.y,
+                WHISPER_WIDTH,
+                WHISPER_HEIGHT,
+            ) {
+                send_notice(tx, "whisper target out of range")?;
+                return Ok(());
+            }
+            recipients.push(user.user_id.clone());
+            if target_user.user_id != user.user_id {
+                recipients.push(target_user.user_id.clone());
+            }
+        }
+        ChatScope::Room => {
+            if user.position.map_id == "street" {
+                send_error(tx, "invalid_command", "not in a room")?;
+                return Ok(());
+            }
+            if enc.is_none() {
+                send_error(tx, "invalid_command", "room chat must be encrypted")?;
+                return Ok(());
+            }
+            if user.position.map_id != "street" {
+                recipients.extend(users_in_map.iter().map(|u| u.user_id.clone()));
+            }
+        }
+        ChatScope::Local => {
+            if user.position.map_id != "street" && enc.is_none() {
+                send_error(tx, "invalid_command", "room chat must be encrypted")?;
+                return Ok(());
+            }
+            if user.position.map_id == "street" && enc.is_some() {
+                send_error(tx, "invalid_command", "street chat cannot be encrypted")?;
+                return Ok(());
+            }
+            for other in users_in_map {
+                let allow = if user.position.map_id == "street" {
+                    in_box(
+                        user.position.x,
+                        user.position.y,
+                        other.position.x,
+                        other.position.y,
+                        LOCAL_CHAT_WIDTH,
+                        LOCAL_CHAT_HEIGHT,
+                    )
                 } else {
                     true
+                };
+                if allow {
+                    recipients.push(other.user_id.clone());
                 }
             }
-            ChatScope::Whisper => {
-                in_box(user.position.x, user.position.y, other.position.x, other.position.y, WHISPER_WIDTH, WHISPER_HEIGHT)
-            }
-        };
-        if allow {
-            recipients.push(other.user_id.clone());
         }
     }
 
@@ -474,6 +553,8 @@ async fn handle_chat(
         display_name: user.display_name.clone(),
         text,
         scope: scope.clone(),
+        room_id,
+        enc,
     };
 
     let no_recipients = recipients.is_empty();
@@ -485,6 +566,53 @@ async fn handle_chat(
 
     if no_recipients {
         send_notice(tx, "no recipients")?;
+    }
+
+    Ok(())
+}
+
+async fn handle_room_key(
+    payload: ClientRoomKey,
+    user: &UserState,
+    state: &Arc<RwLock<RelayState>>,
+    tx: &mpsc::UnboundedSender<Message>,
+) -> anyhow::Result<()> {
+    let Some(current_room_id) = user.position.map_id.strip_prefix("room/") else {
+        send_error(tx, "invalid_command", "not in a room")?;
+        return Ok(());
+    };
+    if payload.room_id != current_room_id {
+        send_error(tx, "invalid_command", "room mismatch")?;
+        return Ok(());
+    }
+    if payload.sender_key.is_empty() || payload.ciphertext.is_empty() || payload.nonce.is_empty() {
+        send_error(tx, "invalid_command", "invalid room key payload")?;
+        return Ok(());
+    }
+
+    let state_guard = state.read().await;
+    let users_in_map = connected_users_in_map(&state_guard, &user.position.map_id);
+    let target = users_in_map
+        .iter()
+        .find(|u| u.user_id == payload.target)
+        .map(|u| u.user_id.clone());
+    let target = match target {
+        Some(target) => target,
+        None => {
+            send_error(tx, "invalid_command", "target not found in room")?;
+            return Ok(());
+        }
+    };
+
+    if let Some(handle) = state_guard.clients.get(&target) {
+        let env = ServerRoomKey {
+            room_id: payload.room_id,
+            from: user.user_id.clone(),
+            sender_key: payload.sender_key,
+            nonce: payload.nonce,
+            ciphertext: payload.ciphertext,
+        };
+        send_envelope(&handle.tx, "server.room_key", &env)?;
     }
 
     Ok(())
@@ -907,7 +1035,7 @@ fn handle_help(tx: &mpsc::UnboundedSender<Message>) -> anyhow::Result<()> {
         "commands:",
         "/say <msg> - local chat",
         "/who - list nearby users",
-        "/whisper <msg> - 3x3 local whisper",
+        "/whisper <user> <msg> - 5x5 local whisper",
         "/buy - buy current room",
         "/pay <user> <amount> - send XMR (mock)",
         "/balance - show balance (mock)",
@@ -1238,6 +1366,7 @@ fn collect_nearby_from_list(user: &UserState, users_in_map: &[&UserState]) -> Ve
             display_name: other.display_name.clone(),
             x: other.position.x,
             y: other.position.y,
+            x25519_pubkey: other.x25519_pubkey.clone(),
         });
     }
     users

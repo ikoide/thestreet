@@ -50,13 +50,13 @@ For multiple local clients, each needs a unique `identity_key_path`. Use `config
 ## Controls
 
 - Move: arrow keys or WASD
-- Input: press `/` to enter command mode
+- Input: press `/` for commands, Enter to type chat, Tab to cycle chat modes
 - Info: press `i` to cycle info panels
 - Quit: Esc or Ctrl+Q
 
 ## Commands
 
-- Chat: `/say <msg>`, `/whisper <msg>`
+- Chat: `/say <msg>`, `/whisper <user> <msg>`
 - Presence: `/who`
 - Rooms: `/buy`, `/room_name <name>`, `/door_color <color>`, `/access <open|whitelist|blacklist> [user|pubkey...]`, `/access show`
 - Identity: `/claim_name <name>`

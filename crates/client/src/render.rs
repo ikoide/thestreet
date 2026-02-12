@@ -89,11 +89,12 @@ pub fn draw_ui(f: &mut Frame, app: &AppState) {
 
     let input_block = Block::default()
         .borders(Borders::ALL)
-        .title(Span::styled("Input", title_style));
+        .title(Span::styled(app.input_title(), title_style));
+    let input_hint = app.input_hint();
     let (input_text, input_style) = if app.input_mode {
         (app.input.as_str(), Style::default().fg(Color::White))
     } else {
-        ("/ to chat/commands", Style::default().fg(Color::DarkGray))
+        (input_hint.as_str(), Style::default().fg(Color::DarkGray))
     };
     let input_paragraph = Paragraph::new(input_text)
         .block(input_block)

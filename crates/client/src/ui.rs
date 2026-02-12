@@ -11,13 +11,15 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 use tokio::sync::mpsc;
 use tokio::time::interval;
+use x25519_dalek::StaticSecret;
 
 use street_common::ids::new_message_id;
 use street_protocol::signing::sign_envelope;
 use street_protocol::{
-    ChatScope, ClientChat, ClientCommand, ClientMove, Envelope, ServerChat, ServerError,
-    ServerMapChange, ServerNearby, ServerNotice, ServerRoomInfo, ServerState, ServerTrainState,
-    ServerTxUpdate, ServerWelcome, ServerWho, TrainInfo,
+    ChatScope, ClientChat, ClientCommand, ClientMove, ClientRoomKey, EncryptedPayload, Envelope,
+    ServerChat, ServerError, ServerMapChange, ServerNearby, ServerNotice, ServerRoomInfo,
+    ServerRoomKey, ServerState, ServerTrainState, ServerTxUpdate, ServerWelcome, ServerWho,
+    TrainInfo,
 };
 use street_world::{
     distance_to_nearest_door, parse_room_map_id, room_customizer_position, room_id_for_door,
@@ -31,6 +33,24 @@ use street_world::monorail::{
 use crate::input::InputEvent;
 use crate::render::draw_ui;
 use crate::net::OutgoingMessage;
+use crate::crypto::{
+    decrypt_with_key, decrypt_with_shared, encrypt_with_key, encrypt_with_shared, generate_room_key,
+};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ChatInputMode {
+    Say,
+    Whisper,
+}
+
+impl ChatInputMode {
+    fn next(self) -> Self {
+        match self {
+            ChatInputMode::Say => ChatInputMode::Whisper,
+            ChatInputMode::Whisper => ChatInputMode::Say,
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct AppState {
@@ -47,6 +67,12 @@ pub struct AppState {
     pub info_text: String,
     pub input: String,
     pub input_mode: bool,
+    pub chat_mode: ChatInputMode,
+    pub last_whisper_target: Option<String>,
+    pub x25519_secret: [u8; 32],
+    pub x25519_pubkey: String,
+    pub room_keys: HashMap<String, [u8; 32]>,
+    pub room_key_sent: HashMap<String, HashSet<String>>,
     pub display_name: Option<String>,
     pub user_id: String,
     pub balance: Option<String>,
@@ -60,7 +86,11 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn from_welcome(welcome: &ServerWelcome) -> Self {
+    pub fn from_welcome(
+        welcome: &ServerWelcome,
+        x25519_secret: [u8; 32],
+        x25519_pubkey: String,
+    ) -> Self {
         let mut state = Self {
             map_id: welcome.position.map_id.clone(),
             position: (welcome.position.x, welcome.position.y),
@@ -75,6 +105,12 @@ impl AppState {
             info_text: String::new(),
             input: String::new(),
             input_mode: false,
+            chat_mode: ChatInputMode::Say,
+            last_whisper_target: None,
+            x25519_secret,
+            x25519_pubkey,
+            room_keys: HashMap::new(),
+            room_key_sent: HashMap::new(),
             display_name: welcome.display_name.clone(),
             user_id: welcome.client_id.clone(),
             balance: None,
@@ -138,6 +174,28 @@ impl AppState {
         let percent = wrapped * 100.0;
         let offset = distance_to_nearest_door(x as i32);
         format!("{:>6.2}% | offset: {}m", percent, offset)
+    }
+
+    pub fn cycle_chat_mode(&mut self) {
+        self.chat_mode = self.chat_mode.next();
+    }
+
+    pub fn chat_mode_label(&self) -> String {
+        match self.chat_mode {
+            ChatInputMode::Say => "say".to_string(),
+            ChatInputMode::Whisper => match &self.last_whisper_target {
+                Some(target) => format!("whisper:{target}"),
+                None => "whisper:none".to_string(),
+            },
+        }
+    }
+
+    pub fn input_title(&self) -> String {
+        format!("Input [{}]", self.chat_mode_label())
+    }
+
+    pub fn input_hint(&self) -> String {
+        "Enter to type | / commands | Tab say/whisper".to_string()
     }
 
     pub fn rebuild_info_pages(&mut self) {
@@ -467,7 +525,7 @@ pub async fn run_ui(
                 }
             }
             Some(env) = incoming.recv() => {
-                handle_server_message(&mut app, env);
+                handle_server_message(&mut app, env, &outgoing, &signing_key)?;
                 needs_draw = true;
             }
             Some(input) = input_rx.recv() => {
@@ -485,7 +543,12 @@ pub async fn run_ui(
     Ok(())
 }
 
-fn handle_server_message(app: &mut AppState, env: Envelope) {
+fn handle_server_message(
+    app: &mut AppState,
+    env: Envelope,
+    outgoing: &mpsc::UnboundedSender<OutgoingMessage>,
+    signing_key: &Arc<ed25519_dalek::SigningKey>,
+) -> anyhow::Result<()> {
     match env.message_type.as_str() {
         "server.state" => {
             if let Ok(payload) = serde_json::from_value::<ServerState>(env.payload) {
@@ -511,9 +574,7 @@ fn handle_server_message(app: &mut AppState, env: Envelope) {
         }
         "server.chat" => {
             if let Ok(payload) = serde_json::from_value::<ServerChat>(env.payload) {
-                let name = payload.display_name.unwrap_or(payload.from);
-                let location = app.location_label();
-                app.push_chat(format!("[{location}] {name}: {}", payload.text));
+                handle_chat_message(app, payload)?;
             }
         }
         "server.nearby" => {
@@ -522,6 +583,12 @@ fn handle_server_message(app: &mut AppState, env: Envelope) {
                 app.nearby_positions.clear();
                 app.nearby_positions
                     .extend(app.nearby.iter().map(|user| (user.x, user.y)));
+                maybe_distribute_room_key(app, outgoing, signing_key)?;
+            }
+        }
+        "server.room_key" => {
+            if let Ok(payload) = serde_json::from_value::<ServerRoomKey>(env.payload) {
+                handle_room_key_message(app, payload)?;
             }
         }
         "server.train_state" => {
@@ -572,6 +639,7 @@ fn handle_server_message(app: &mut AppState, env: Envelope) {
         }
         _ => {}
     }
+    Ok(())
 }
 
 fn handle_input_event(
@@ -584,6 +652,9 @@ fn handle_input_event(
         InputEvent::Key(key) => {
             if app.input_mode {
                 match key.code {
+                    KeyCode::Tab if key.kind == KeyEventKind::Press => {
+                        app.cycle_chat_mode();
+                    }
                     KeyCode::Esc if key.kind == KeyEventKind::Press => {
                         app.input.clear();
                         app.input_mode = false;
@@ -595,12 +666,8 @@ fn handle_input_event(
                         if input.is_empty() {
                             return Ok(false);
                         }
-                        if input.starts_with('/') {
-                            if handle_command_input(app, &input, outgoing, signing_key)? {
-                                return Ok(true);
-                            }
-                        } else {
-                            app.push_chat("use /say to chat".to_string());
+                        if handle_text_input(app, &input, outgoing, signing_key)? {
+                            return Ok(true);
                         }
                     }
                     KeyCode::Backspace if key.kind == KeyEventKind::Press => {
@@ -619,6 +686,9 @@ fn handle_input_event(
                     return Ok(true);
                 }
                 KeyCode::Esc if key.kind == KeyEventKind::Press => return Ok(true),
+                KeyCode::Tab if key.kind == KeyEventKind::Press => {
+                    app.cycle_chat_mode();
+                }
                 KeyCode::Char('i') if key.kind == KeyEventKind::Press => {
                     app.cycle_info();
                 }
@@ -638,6 +708,10 @@ fn handle_input_event(
                     app.input_mode = true;
                     app.input.clear();
                     app.input.push('/');
+                }
+                KeyCode::Enter if key.kind == KeyEventKind::Press => {
+                    app.input_mode = true;
+                    app.input.clear();
                 }
                 _ => {
                     if let Some(dir) = direction_from_key(&key.code) {
@@ -678,12 +752,25 @@ fn handle_command_input(
         return Ok(false);
     }
     if name == "whisper" {
-        let text = args.join(" ");
-        let payload = ClientChat {
-            scope: Some(ChatScope::Whisper),
-            text,
+        if args.len() < 2 {
+            app.push_chat("error: usage: /whisper <user> <msg>".to_string());
+            return Ok(false);
+        }
+        let target = args[0].clone();
+        let text = args[1..].join(" ");
+        if text.is_empty() {
+            app.push_chat("error: usage: /whisper <user> <msg>".to_string());
+            return Ok(false);
+        }
+        let target_user = match resolve_target_user(app, &target) {
+            Ok(user) => user,
+            Err(err) => {
+                app.push_chat(format!("error: {err}"));
+                return Ok(false);
+            }
         };
-        send_signed(outgoing, signing_key, "client.chat", &payload)?;
+        app.last_whisper_target = Some(target_user.id.clone());
+        send_whisper_chat(app, outgoing, signing_key, &target_user, &text)?;
         return Ok(false);
     }
     if name == "say" {
@@ -691,11 +778,7 @@ fn handle_command_input(
         if text.is_empty() {
             return Ok(false);
         }
-        let payload = ClientChat {
-            scope: Some(ChatScope::Local),
-            text,
-        };
-        send_signed(outgoing, signing_key, "client.chat", &payload)?;
+        send_local_chat(app, outgoing, signing_key, &text)?;
         return Ok(false);
     }
     if name == "exit" || name == "quit" {
@@ -723,6 +806,37 @@ fn handle_command_input(
     Ok(false)
 }
 
+fn handle_text_input(
+    app: &mut AppState,
+    input: &str,
+    outgoing: &mpsc::UnboundedSender<OutgoingMessage>,
+    signing_key: &Arc<ed25519_dalek::SigningKey>,
+) -> anyhow::Result<bool> {
+    if input.starts_with('/') {
+        return handle_command_input(app, input, outgoing, signing_key);
+    }
+    match app.chat_mode {
+        ChatInputMode::Say => {
+            send_local_chat(app, outgoing, signing_key, input)?;
+        }
+        ChatInputMode::Whisper => {
+            let Some(target) = app.last_whisper_target.clone() else {
+                app.push_chat("error: no whisper target (use /whisper <user> <msg>)".to_string());
+                return Ok(false);
+            };
+            let target_user = match find_user_by_id(app, &target) {
+                Some(user) => user,
+                None => {
+                    app.push_chat("error: whisper target not nearby".to_string());
+                    return Ok(false);
+                }
+            };
+            send_whisper_chat(app, outgoing, signing_key, &target_user, input)?;
+        }
+    }
+    Ok(false)
+}
+
 fn send_move(
     outgoing: &mpsc::UnboundedSender<OutgoingMessage>,
     signing_key: &Arc<ed25519_dalek::SigningKey>,
@@ -730,6 +844,71 @@ fn send_move(
 ) -> anyhow::Result<()> {
     let payload = ClientMove { dir };
     send_signed(outgoing, signing_key, "client.move", &payload)
+}
+
+fn send_local_chat(
+    app: &mut AppState,
+    outgoing: &mpsc::UnboundedSender<OutgoingMessage>,
+    signing_key: &Arc<ed25519_dalek::SigningKey>,
+    text: &str,
+) -> anyhow::Result<()> {
+    if text.trim().is_empty() {
+        return Ok(());
+    }
+    let mut payload = ClientChat {
+        scope: Some(ChatScope::Local),
+        text: text.to_string(),
+        target: None,
+        enc: None,
+    };
+
+    if let Some(room_id) = current_room_id(app) {
+        let Some(room_key) = ensure_room_key(app, outgoing, signing_key, &room_id)? else {
+            app.push_chat("error: room key unavailable".to_string());
+            return Ok(());
+        };
+        let (nonce, ciphertext) = encrypt_with_key(&room_key, text.as_bytes())?;
+        payload.text.clear();
+        payload.enc = Some(EncryptedPayload {
+            alg: "xchacha20poly1305".to_string(),
+            nonce,
+            ciphertext,
+            sender_key: None,
+        });
+    }
+
+    send_signed(outgoing, signing_key, "client.chat", &payload)
+}
+
+fn send_whisper_chat(
+    app: &mut AppState,
+    outgoing: &mpsc::UnboundedSender<OutgoingMessage>,
+    signing_key: &Arc<ed25519_dalek::SigningKey>,
+    target: &street_protocol::NearbyUser,
+    text: &str,
+) -> anyhow::Result<()> {
+    if text.trim().is_empty() {
+        return Ok(());
+    }
+    let Some(peer_key) = target.x25519_pubkey.as_deref() else {
+        app.push_chat("error: target missing x25519 key".to_string());
+        return Ok(());
+    };
+    let secret = StaticSecret::from(app.x25519_secret);
+    let context = whisper_context(&app.user_id, &target.id);
+    let (nonce, ciphertext) = encrypt_with_shared(&secret, peer_key, context.as_bytes(), text.as_bytes())?;
+    let payload = ClientChat {
+        scope: Some(ChatScope::Whisper),
+        text: String::new(),
+        target: Some(target.id.clone()),
+        enc: Some(EncryptedPayload {
+            alg: "x25519-xchacha20poly1305".to_string(),
+            nonce,
+            ciphertext,
+            sender_key: Some(app.x25519_pubkey.clone()),
+        }),
+    };
+    send_signed(outgoing, signing_key, "client.chat", &payload)
 }
 
 fn send_signed<T: serde::Serialize>(
@@ -764,6 +943,192 @@ fn send_room_info_request(
         args: vec![room_id.to_string()],
     };
     send_signed(outgoing, signing_key, "client.command", &payload)
+}
+
+fn current_room_id(app: &AppState) -> Option<String> {
+    app.map_id.strip_prefix("room/").map(|value| value.to_string())
+}
+
+fn whisper_context(a: &str, b: &str) -> String {
+    let (min_id, max_id) = if a <= b { (a, b) } else { (b, a) };
+    format!("whisper:{min_id}:{max_id}")
+}
+
+fn room_key_context(room_id: &str, a: &str, b: &str) -> String {
+    let (min_id, max_id) = if a <= b { (a, b) } else { (b, a) };
+    format!("room-key:{room_id}:{min_id}:{max_id}")
+}
+
+fn resolve_target_user(app: &AppState, token: &str) -> anyhow::Result<street_protocol::NearbyUser> {
+    let mut matches = app
+        .nearby
+        .iter()
+        .filter(|u| u.id == token || u.display_name.as_deref() == Some(token))
+        .cloned()
+        .collect::<Vec<_>>();
+    if matches.is_empty() {
+        anyhow::bail!("whisper target not found")
+    }
+    if matches.len() > 1 {
+        anyhow::bail!("ambiguous whisper target")
+    }
+    Ok(matches.remove(0))
+}
+
+fn find_user_by_id(app: &AppState, user_id: &str) -> Option<street_protocol::NearbyUser> {
+    app.nearby.iter().find(|u| u.id == user_id).cloned()
+}
+
+fn room_leader_id(app: &AppState) -> String {
+    let mut ids = app.nearby.iter().map(|u| u.id.clone()).collect::<Vec<_>>();
+    ids.push(app.user_id.clone());
+    ids.sort();
+    ids.first().cloned().unwrap_or_else(|| app.user_id.clone())
+}
+
+fn ensure_room_key(
+    app: &mut AppState,
+    outgoing: &mpsc::UnboundedSender<OutgoingMessage>,
+    signing_key: &Arc<ed25519_dalek::SigningKey>,
+    room_id: &str,
+) -> anyhow::Result<Option<[u8; 32]>> {
+    if let Some(key) = app.room_keys.get(room_id) {
+        return Ok(Some(*key));
+    }
+    let leader = room_leader_id(app);
+    if leader != app.user_id {
+        return Ok(None);
+    }
+    let key = generate_room_key();
+    app.room_keys.insert(room_id.to_string(), key);
+    app.room_key_sent.insert(room_id.to_string(), HashSet::new());
+    distribute_room_key(app, outgoing, signing_key, room_id, key)?;
+    Ok(Some(key))
+}
+
+fn distribute_room_key(
+    app: &mut AppState,
+    outgoing: &mpsc::UnboundedSender<OutgoingMessage>,
+    signing_key: &Arc<ed25519_dalek::SigningKey>,
+    room_id: &str,
+    key: [u8; 32],
+) -> anyhow::Result<()> {
+    let sent = app
+        .room_key_sent
+        .entry(room_id.to_string())
+        .or_insert_with(HashSet::new);
+    for user in &app.nearby {
+        if user.id == app.user_id {
+            continue;
+        }
+        if sent.contains(&user.id) {
+            continue;
+        }
+        let Some(peer_key) = user.x25519_pubkey.as_deref() else {
+            continue;
+        };
+        let secret = StaticSecret::from(app.x25519_secret);
+        let context = room_key_context(room_id, &app.user_id, &user.id);
+        let (nonce, ciphertext) = encrypt_with_shared(&secret, peer_key, context.as_bytes(), &key)?;
+        let payload = ClientRoomKey {
+            room_id: room_id.to_string(),
+            target: user.id.clone(),
+            sender_key: app.x25519_pubkey.clone(),
+            nonce,
+            ciphertext,
+        };
+        send_signed(outgoing, signing_key, "client.room_key", &payload)?;
+        sent.insert(user.id.clone());
+    }
+    Ok(())
+}
+
+fn maybe_distribute_room_key(
+    app: &mut AppState,
+    outgoing: &mpsc::UnboundedSender<OutgoingMessage>,
+    signing_key: &Arc<ed25519_dalek::SigningKey>,
+) -> anyhow::Result<()> {
+    let Some(room_id) = current_room_id(app) else {
+        return Ok(());
+    };
+    let key = match ensure_room_key(app, outgoing, signing_key, &room_id)? {
+        Some(key) => key,
+        None => return Ok(()),
+    };
+    let leader = room_leader_id(app);
+    if leader != app.user_id {
+        return Ok(());
+    }
+    distribute_room_key(app, outgoing, signing_key, &room_id, key)
+}
+
+fn handle_room_key_message(app: &mut AppState, payload: ServerRoomKey) -> anyhow::Result<()> {
+    let secret = StaticSecret::from(app.x25519_secret);
+    let context = room_key_context(&payload.room_id, &app.user_id, &payload.from);
+    let plaintext = decrypt_with_shared(
+        &secret,
+        &payload.sender_key,
+        context.as_bytes(),
+        &payload.nonce,
+        &payload.ciphertext,
+    )?;
+    let key_bytes: [u8; 32] = plaintext
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("invalid room key"))?;
+    app.room_keys.insert(payload.room_id.clone(), key_bytes);
+    app.push_chat("room key received".to_string());
+    Ok(())
+}
+
+fn handle_chat_message(app: &mut AppState, payload: ServerChat) -> anyhow::Result<()> {
+    let name = payload.display_name.clone().unwrap_or(payload.from.clone());
+    let text = if let Some(enc) = payload.enc {
+        let decrypted = match payload.scope {
+            ChatScope::Whisper => {
+                let Some(sender_key) = enc.sender_key.as_ref() else {
+                    return Ok(app.push_chat(format!("[whisper] {name}: [decrypt failed]")));
+                };
+                let secret = StaticSecret::from(app.x25519_secret);
+                let context = whisper_context(&app.user_id, &payload.from);
+                decrypt_with_shared(
+                    &secret,
+                    sender_key,
+                    context.as_bytes(),
+                    &enc.nonce,
+                    &enc.ciphertext,
+                )
+            }
+            ChatScope::Room | ChatScope::Local => {
+                let room_id = payload
+                    .room_id
+                    .clone()
+                    .or_else(|| current_room_id(app));
+                let Some(room_id) = room_id else {
+                    return Ok(app.push_chat(format!("{name}: [decrypt failed]")));
+                };
+                let Some(room_key) = app.room_keys.get(&room_id) else {
+                    return Ok(app.push_chat(format!("{name}: [decrypt failed]")));
+                };
+                decrypt_with_key(room_key, &enc.nonce, &enc.ciphertext)
+            }
+        };
+        match decrypted {
+            Ok(bytes) => String::from_utf8(bytes).unwrap_or_else(|_| "[invalid utf8]".to_string()),
+            Err(_) => "[decrypt failed]".to_string(),
+        }
+    } else {
+        payload.text.clone()
+    };
+
+    let line = match payload.scope {
+        ChatScope::Whisper => format!("[whisper] {name}: {text}"),
+        _ => {
+            let location = app.location_label();
+            format!("[{location}] {name}: {text}")
+        }
+    };
+    app.push_chat(line);
+    Ok(())
 }
 
 fn handle_quick_station_action(

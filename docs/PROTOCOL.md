@@ -67,7 +67,8 @@ All messages use a common envelope:
   "payload": {
     "pubkey": "base64-ed25519-pubkey",
     "challenge_sig": "base64-signature",
-    "client_version": "0.1"
+    "client_version": "0.1",
+    "x25519_pubkey": "base64-x25519-pubkey"
   }
 }
 ```
@@ -92,8 +93,13 @@ All messages use a common envelope:
 - Server validates collisions and map transitions.
 
 ### client.chat
-- Payload: `{ "scope": "local|whisper|room", "text": "..." }`
+- Payload: `{ "scope": "local|whisper|room", "text": "...", "target": "user-or-name", "enc": {"alg": "...", "nonce": "...", "ciphertext": "...", "sender_key": "..."} }`
 - `scope` defaults to `local` if omitted.
+- `target` is required for `whisper`.
+- `enc` is required for `whisper` and for room chat.
+
+### client.room_key
+- Payload: `{ "room_id": "...", "target": "u_123", "sender_key": "base64-x25519-pubkey", "nonce": "...", "ciphertext": "..." }`
 
 ### client.command
 - Payload: `{ "name": "who|buy|pay|balance|faucet|board|depart|room_name|door_color|claim_name|access|help|room_info", "args": ["..."] }`
@@ -115,10 +121,13 @@ All messages use a common envelope:
 - Payload: `{ "map_id": "...", "position": {"x": 0, "y": 0} }`
 
 ### server.chat
-- Payload: `{ "from": "u_123", "display_name": "...", "text": "...", "scope": "..." }`
+- Payload: `{ "from": "u_123", "display_name": "...", "text": "...", "scope": "...", "room_id": "...", "enc": {"alg": "...", "nonce": "...", "ciphertext": "...", "sender_key": "..."} }`
 
 ### server.nearby
-- Payload: `{ "users": [{"id": "u_123", "display_name": "...", "x": 0, "y": 0}] }`
+- Payload: `{ "users": [{"id": "u_123", "display_name": "...", "x": 0, "y": 0, "x25519_pubkey": "..."}] }`
+
+### server.room_key
+- Payload: `{ "room_id": "...", "from": "u_123", "sender_key": "base64-x25519-pubkey", "nonce": "...", "ciphertext": "..." }`
 
 ### server.train_state
 - Payload: `{ "trains": [{"id": 0, "x": 1234.5, "clockwise": true}] }`

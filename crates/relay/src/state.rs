@@ -11,6 +11,8 @@ use street_world::STREET_CIRCUMFERENCE_TILES;
 pub struct UserState {
     pub user_id: String,
     pub pubkey: String,
+    #[serde(default)]
+    pub x25519_pubkey: Option<String>,
     pub display_name: Option<String>,
     pub position: Position,
 }
@@ -95,6 +97,7 @@ impl ServerState {
         let user = UserState {
             user_id: user_id.clone(),
             pubkey: pubkey.clone(),
+            x25519_pubkey: None,
             display_name: None,
             position: Position {
                 map_id: "street".to_string(),
@@ -156,7 +159,7 @@ fn init_trains() -> Vec<TrainState> {
     let mut trains = Vec::new();
     let circumference = STREET_CIRCUMFERENCE_TILES as f64;
     let spacing = circumference / 4.0;
-    let speed = 128.0;
+    let speed = 64.0;
     for id in 0..4u32 {
         trains.push(TrainState {
             id,
